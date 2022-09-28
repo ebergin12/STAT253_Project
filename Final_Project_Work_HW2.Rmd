@@ -1,0 +1,51 @@
+---
+title: "Final_Project_Work_HW2_JaJuArEm"
+author: "Jacob Kresnicka"
+date: "2022-09-21"
+output: html_document
+---
+
+# library statements 
+
+```{r}
+library(ISLR)
+library(dplyr)
+library(readr)
+library(broom)
+library(ggplot2)
+library(tidymodels) 
+library(stringr)
+library(splitstackshape)
+```
+
+# read in data
+
+```{r}
+library(readr)
+imdb_top_1000 <- read_csv("~/Desktop/Statistical Machine Learning/R Files/Final Project/imdb_top_1000.csv")
+View(imdb_top_1000)
+```
+
+# data cleaning
+
+```{r}
+imdb_clean <- imdb_top_1000 %>%
+  select(-Poster_Link, -Certificate) %>%
+  cSplit("Genre", sep = ",", direction = "wide")
+
+runtime_clean <- imdb_top_1000$Runtime %>%
+  str_replace(" min", "") %>%
+  as.numeric()
+
+imdb_clean$Runtime <- runtime_clean
+
+
+  
+  
+
+```
+
+# creation of cv folds
+# model spec
+# recipes & workflows
+# fit & tune models
