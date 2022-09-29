@@ -78,10 +78,17 @@ full_model %>% tidy()
 
 # fit & tune models
 
+# LASSO
+
 ```{r}
 
 ```
 
+
+
+
+
+2.
 
 3. Analyzing and predicting gross revenue of movies could have harmful effects on the performance of movies in box offices. For example, if we were to use our model to predict the success of a new movie, our model's prediction would affect people's decision making in whether to see the movie. This could affect the actual outcome of how movies perform at the box office. Our model's predictions could introduce bias into people's decisions of whether or not to see a movie.
 
