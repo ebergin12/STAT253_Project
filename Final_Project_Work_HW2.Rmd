@@ -60,7 +60,8 @@ lm_spec <-
 
 ```{r}
 full_rec <- recipe(Gross ~ ., data = imdb_clean) %>%
-    #step_rm(Series_Title, Released_Year, Overview) %>% variables causing issues, maybe this will work
+    step_rm(Series_Title, Released_Year, Overview,
+            Director, Star1, Star2, Star3, Star4, Genre_2, Genre_3) %>% #variables causing issues
     step_nzv(all_predictors()) %>% 
     step_normalize(all_numeric_predictors()) %>% 
     step_dummy(all_nominal_predictors()) 
