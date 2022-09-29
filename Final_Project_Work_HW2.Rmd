@@ -39,13 +39,44 @@ runtime_clean <- imdb_top_1000$Runtime %>%
 
 imdb_clean$Runtime <- runtime_clean
 
-
-  
-  
-
 ```
 
 # creation of cv folds
+
+```{r}
+data_cv10 <- vfold_cv(imdb_clean, v = 10)
+```
+
 # model spec
+
+```{r}
+lm_spec <-
+    linear_reg() %>% 
+    set_engine(engine = 'lm') %>% 
+    set_mode('regression')
+```
+
 # recipes & workflows
+
+```{r}
+full_rec <- recipe(Gross ~ ., data = imdb_clean) %>%
+    step_rm(Series_Title, Released_Year, Overview) %>% 
+    step_nzv(all_predictors()) %>% 
+    step_normalize(all_numeric_predictors()) %>% 
+    step_dummy(all_nominal_predictors()) 
+    
+full_lm_wf <- workflow() %>%
+    add_recipe(full_rec) %>%
+    add_model(lm_spec)
+    
+full_model <- fit(full_lm_wf, data = imdb_clean) 
+
+full_model %>% tidy()
+```
+
+
 # fit & tune models
+
+```{r}
+
+```
