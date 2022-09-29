@@ -24,7 +24,7 @@ tidymodels_prefer()
 ```{r}
 library(readr)
 imdb_top_1000 <- read_csv("~/Desktop/Statistical Machine Learning/R Files/Final Project/imdb_top_1000.csv")
-View(imdb_top_1000)
+head(imdb_top_1000)
 ```
 
 # data cleaning
@@ -64,7 +64,8 @@ full_rec <- recipe(Gross ~ ., data = imdb_clean) %>%
             Director, Star1, Star2, Star3, Star4, Genre_2, Genre_3) %>% #variables causing issues
     step_nzv(all_predictors()) %>% 
     step_normalize(all_numeric_predictors()) %>% 
-    step_dummy(all_nominal_predictors()) 
+    step_dummy(all_nominal_predictors()) %>%
+    step_naomit(Gross)
     
 full_lm_wf <- workflow() %>%
     add_recipe(full_rec) %>%
@@ -82,13 +83,115 @@ full_model %>% tidy()
 
 ```{r}
 
+# Lasso Model Spec with tune
+lm_lasso_spec_tune <- 
+  linear_reg() %>%
+  set_args(mixture = 1, penalty = tune()) %>% ## mixture = 1 indicates Lasso
+  set_engine(engine = 'glmnet') %>% #note we are using a different engine
+  set_mode('regression') 
+
+# Recipe with standardization (!) --> just include all these always
+data_rec <- recipe(Gross ~ ., data = imdb_clean) %>%
+    step_rm(Series_Title, Released_Year, Overview,
+            Director, Star1, Star2, Star3, Star4, Genre_2, Genre_3) %>%
+    step_nzv(all_predictors()) %>% # removes variables with the same value (so duplicates don't mess up model)
+    step_novel(all_nominal_predictors()) %>% # important if you have rare categorical variables 
+    step_normalize(all_numeric_predictors()) %>%  # super important standardization step for LASSO
+    step_dummy(all_nominal_predictors()) %>%  # creates indicator variables for categorical variables
+    step_naomit(Gross)
+
+# Workflow (Recipe + Model)
+lasso_wf_tune <- workflow() %>% 
+  add_recipe(data_rec) %>%
+  add_model(lm_lasso_spec_tune) 
+
+# Tune Model (trying a variety of values of Lambda penalty)
+penalty_grid <- grid_regular(
+  penalty(range = c(-1, 8)),
+  levels = 60)
+
+tune_res <- tune_grid( # new function for tuning parameters
+  lasso_wf_tune, # workflow
+  resamples = data_cv10, # cv folds
+  metrics = metric_set(rmse, mae),
+  grid = penalty_grid # penalty grid defined above
+)
+
+# Visualize Model Evaluation Metrics from Tuning
+autoplot(tune_res) + theme_classic()
+
+# Summarize Model Evaluation Metrics (CV)
+collect_metrics(tune_res) %>%
+  filter(.metric == 'rmse') %>% # or choose mae
+  select(penalty, rmse = mean) 
+
+best_penalty <- select_best(tune_res, metric = 'rmse') # choose penalty value based on lowest mae or rmse
+
+# Fit Final Model
+final_wf <- finalize_workflow(lasso_wf_tune, best_penalty) # incorporates penalty value to workflow
+
+final_fit <- fit(final_wf, data = imdb_clean)
+
+tidy(final_fit)
+```
+
+```{r}
+best_penalty <- select_best(tune_res, metric = 'mae') # choose penalty value based on lowest cv mae
+best_penalty
+
+# Use this if worried about overfitting
+best_se_penalty <- select_by_one_std_err(tune_res, metric = 'mae', desc(penalty)) # choose largest penalty value within 1 se of the lowest cv mae
+best_se_penalty
+```
+
+```{r}
+final_wf <- finalize_workflow(lasso_wf_tune, best_penalty) # incorporates penalty value to workflow
+final_wf_se <- finalize_workflow(lasso_wf_tune, best_se_penalty) # incorporates penalty value to workflow
+
+final_fit <- fit(final_wf, data = imdb_clean)
+final_fit_se <- fit(final_wf_se, data = imdb_clean)
+
+tidy(final_fit)
+tidy(final_fit_se)
+```
+
+```{r}
+final_fit_se %>% tidy() %>% filter(estimate != 0)
+```
+
+```{r}
+lasso_mod_out <- final_fit_se %>%
+    predict(new_data = imdb_clean) %>%
+    bind_cols(imdb_clean) %>%
+    mutate(resid = Gross - .pred)
+
+ggplot(lasso_mod_out, aes(x = .pred, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out, aes(x = Runtime, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out, aes(x = IMDB_Rating, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out, aes(x = No_of_Votes, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
 ```
 
 
-
-
-
-2.
+2. 
 
 3. Analyzing and predicting gross revenue of movies could have harmful effects on the performance of movies in box offices. For example, if we were to use our model to predict the success of a new movie, our model's prediction would affect people's decision making in whether to see the movie. This could affect the actual outcome of how movies perform at the box office. Our model's predictions could introduce bias into people's decisions of whether or not to see a movie.
 
