@@ -16,6 +16,7 @@ library(ggplot2)
 library(tidymodels) 
 library(stringr)
 library(splitstackshape)
+tidymodels_prefer()
 ```
 
 # read in data
