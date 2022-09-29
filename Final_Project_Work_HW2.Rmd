@@ -1,11 +1,18 @@
 ---
-title: "Final_Project_Work_HW2_JaJuArEm"
-author: "Jacob Kresnicka"
-date: "2022-09-21"
-output: html_document
+title: 'STAT 253 Final Project'
+author: "Jacob, Julian, Aristo, and Emily"
+date: "September 30, 2022"
+output: 
+  html_document:
+    df_print: paged
+    code_download: true
 ---
 
-# library statements 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error=TRUE, message=FALSE, warning=FALSE)
+```
+
+# Library Statements 
 
 ```{r}
 library(ISLR)
@@ -19,20 +26,20 @@ library(splitstackshape)
 tidymodels_prefer()
 ```
 
-# read in data
+# Read in Data
 
 ```{r}
 library(readr)
 imdb_top_1000 <- read_csv("~/Desktop/Statistical Machine Learning/R Files/Final Project/imdb_top_1000.csv")
-head(imdb_top_1000)
 ```
 
-# data cleaning
+# Data Cleaning
 
 ```{r}
 imdb_clean <- imdb_top_1000 %>%
   select(-Poster_Link, -Certificate) %>%
-  cSplit("Genre", sep = ",", direction = "wide")
+  cSplit("Genre", sep = ",", direction = "wide") %>%
+  mutate(Gross = log(Gross))
 
 runtime_clean <- imdb_top_1000$Runtime %>%
   str_replace(" min", "") %>%
@@ -41,13 +48,13 @@ runtime_clean <- imdb_top_1000$Runtime %>%
 imdb_clean$Runtime <- runtime_clean
 ```
 
-# creation of cv folds
+# Creation of CV Folds
 
 ```{r}
 data_cv10 <- vfold_cv(imdb_clean, v = 10)
 ```
 
-# model spec
+# Model Spec for Linear Regression Model
 
 ```{r}
 lm_spec <-
@@ -56,7 +63,7 @@ lm_spec <-
     set_mode('regression')
 ```
 
-# recipes & workflows
+# Recipes and Workflows
 
 ```{r}
 full_rec <- recipe(Gross ~ ., data = imdb_clean) %>%
@@ -77,9 +84,7 @@ full_model %>% tidy()
 ```
 
 
-# fit & tune models
-
-# LASSO
+# LASSO - Fit and Tune Models
 
 ```{r}
 
@@ -107,8 +112,8 @@ lasso_wf_tune <- workflow() %>%
 
 # Tune Model (trying a variety of values of Lambda penalty)
 penalty_grid <- grid_regular(
-  penalty(range = c(-1, 8)),
-  levels = 60)
+  penalty(range = c(-3, 1)),
+  levels = 30)
 
 tune_res <- tune_grid( # new function for tuning parameters
   lasso_wf_tune, # workflow
@@ -119,6 +124,11 @@ tune_res <- tune_grid( # new function for tuning parameters
 
 # Visualize Model Evaluation Metrics from Tuning
 autoplot(tune_res) + theme_classic()
+```
+
+# Collect CV Metrics and Select Best Model
+
+```{r}
 
 # Summarize Model Evaluation Metrics (CV)
 collect_metrics(tune_res) %>%
@@ -126,6 +136,11 @@ collect_metrics(tune_res) %>%
   select(penalty, rmse = mean) 
 
 best_penalty <- select_best(tune_res, metric = 'rmse') # choose penalty value based on lowest mae or rmse
+```
+
+# Fit Final Model
+
+```{r}
 
 # Fit Final Model
 final_wf <- finalize_workflow(lasso_wf_tune, best_penalty) # incorporates penalty value to workflow
@@ -136,31 +151,17 @@ tidy(final_fit)
 ```
 
 ```{r}
-best_penalty <- select_best(tune_res, metric = 'mae') # choose penalty value based on lowest cv mae
-best_penalty
+# Final ("best") model predictors and coefficients
 
-# Use this if worried about overfitting
-best_se_penalty <- select_by_one_std_err(tune_res, metric = 'mae', desc(penalty)) # choose largest penalty value within 1 se of the lowest cv mae
-best_se_penalty
+final_fit %>% tidy() %>% filter(estimate != 0)
 ```
 
-```{r}
-final_wf <- finalize_workflow(lasso_wf_tune, best_penalty) # incorporates penalty value to workflow
-final_wf_se <- finalize_workflow(lasso_wf_tune, best_se_penalty) # incorporates penalty value to workflow
-
-final_fit <- fit(final_wf, data = imdb_clean)
-final_fit_se <- fit(final_wf_se, data = imdb_clean)
-
-tidy(final_fit)
-tidy(final_fit_se)
-```
+# Visualize Residuals
 
 ```{r}
-final_fit_se %>% tidy() %>% filter(estimate != 0)
-```
 
-```{r}
-lasso_mod_out <- final_fit_se %>%
+# Visualize Residuals
+lasso_mod_out <- final_fit %>%
     predict(new_data = imdb_clean) %>%
     bind_cols(imdb_clean) %>%
     mutate(resid = Gross - .pred)
@@ -191,9 +192,11 @@ ggplot(lasso_mod_out, aes(x = No_of_Votes, y = resid)) +
 ```
 
 
-2. 
+The overall goal of our linear regression model is to predict a movie's gross box office revenue based on a number of predictors. The goal of our initial investigation was to determine which subset of predictors are the most important for inclusion in our model. In order to determine the "best" linear regression model to achieve our analysis goals, we utilized the LASSO algorithm. The goal of LASSO is to decrease variance in our model by constraining the coefficient estimates and discouraging the inclusion of weakly informative predictors through the use of a tuning parameter. This improves the predictive accuracy of our model. We chose this algorithm over the best subset selection algorithm because LASSO is substantially more computationally efficient. Furthermore, since our main analysis goal is predictive accuracy, we decided against using forward stepwise or backwards stepwise selection because these algorithms do not guarantee the best overall model. A model using a smaller subset of variables may have increased interpretability, but this would come at the expense of predictive accuracy.
 
-3. Analyzing and predicting gross revenue of movies could have harmful effects on the performance of movies in box offices. For example, if we were to use our model to predict the success of a new movie, our model's prediction would affect people's decision making in whether to see the movie. This could affect the actual outcome of how movies perform at the box office. Our model's predictions could introduce bias into people's decisions of whether or not to see a movie.
+The main caution we want to keep in mind when communicating our work is that our model may be bias against new names in the movie industry. The model cannot determine a director, actor, or actresses' talent. It only bases its predictions off of how previous movies that individual was involved in previously performed. Furthermore, the inclusion of the number of votes predictor in our model raises further concerns of potential bias. Our initial evaluation of the residual vs. predictor plot revealed a textbook case of heteroscedasticity. Performing a log transformation on our outcome variable, gross revenue, improved this issue. However, there is still a slight pattern noticeable in the residual vs. predictor plot. Analysis of the residual vs. quantitative predictor plots reveals the number of votes predictor as the likely source of this error. The caution to keep in mind with the inclusion of this predictor is the idea of participation bias. In further investigations, we intend to evaluate whether to "override" the LASSO results and exclude the number of votes predictor from the model if we determine that it is introducing bias into our model.
 
-The main caution we want to keep in mind when communicating our work is that our model may be bias against new names in the movie industry. The model cannot determine a director, actor, or actresses' talent. It only bases its predictions off of how previous movies that individual was involved in previously performed.
+It is also important to consider any harms that may come from our analyses. Analyzing and predicting gross revenue of movies can have harmful effects on the performance of movies in box offices. For example, if we use our model to predict the success of a new movie, our model's prediction may affect people's decision as to whether or not to see the movie. This could affect the actual outcome of how movies perform at the box office by introducing bias into people's decision regarding whether to see a newly released movie.
+
+
 
