@@ -200,6 +200,27 @@ The main caution we want to keep in mind when communicating our work is that our
 It is also important to consider any harms that may come from our analyses. Analyzing and predicting gross revenue of movies can have harmful effects on the performance of movies in box offices. For example, if we use our model to predict the success of a new movie, our model's prediction may affect people's decision as to whether or not to see the movie. This could affect the actual outcome of how movies perform at the box office by introducing bias into people's decision regarding whether to see a newly released movie.
 
 
+```{r}
+gam_spec <- 
+  gen_additive_mod() %>%
+  set_engine(engine = 'mgcv') %>%
+  set_mode('regression') 
+
+gam_mod <- fit(gam_spec,
+    Gross ~ s(Runtime) + IMDB_Rating + s(Meta_score) + s(No_of_Votes) + Genre_1,
+    data = imdb_clean 
+)
+
+```
+
+```{r}
+gam_mod %>% pluck('fit') %>% mgcv::gam.check() 
+```
+
+```{r}
+gam_mod %>% pluck('fit') %>% plot()
+```
+
 
 ```{r}
 lm_spec_gam <-
@@ -216,9 +237,9 @@ full_rec <- recipe(Gross ~ ., data = imdb_clean) %>%
     step_naomit(Gross)
 
 spline_rec <- full_rec %>%
-     step_ns(Runtime, deg_free = edf) %>% 
-     step_ns(IMDB_Rating, deg_free = edf) %>%
-     step_ns(No_of_Votes, deg_free = edf)
+     step_ns(Runtime, deg_free = 2) %>% 
+    step_ns(Meta_score, deg_free = 2) %>%
+     step_ns(No_of_Votes, deg_free = 6)
 
 movie_wf <- workflow() %>%
     add_model(lm_spec) %>%
@@ -230,7 +251,7 @@ spline_wf <- workflow() %>%
 
 fit_resamples(
     movie_wf,
-    resamples = data_cv8, # cv folds
+    resamples = data_cv10, # cv folds
     metrics = metric_set(mae,rmse,rsq)                     
 ) %>% collect_metrics()
 ```
