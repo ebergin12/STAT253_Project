@@ -31,6 +31,7 @@ tidymodels_prefer()
 ```{r}
 library(readr)
 imdb_top_1000 <- read_csv("~/Desktop/Statistical Machine Learning/R Files/Final Project/imdb_top_1000.csv")
+head(imdb_top_1000)
 ```
 
 # Data Cleaning
@@ -199,4 +200,38 @@ The main caution we want to keep in mind when communicating our work is that our
 It is also important to consider any harms that may come from our analyses. Analyzing and predicting gross revenue of movies can have harmful effects on the performance of movies in box offices. For example, if we use our model to predict the success of a new movie, our model's prediction may affect people's decision as to whether or not to see the movie. This could affect the actual outcome of how movies perform at the box office by introducing bias into people's decision regarding whether to see a newly released movie.
 
 
+
+```{r}
+lm_spec_gam <-
+  linear_reg() %>%
+  set_engine(engine = 'lm') %>%
+  set_mode('regression')
+
+full_rec <- recipe(Gross ~ ., data = imdb_clean) %>%
+    step_rm(Series_Title, Released_Year, Overview,
+            Director, Star1, Star2, Star3, Star4, Genre_2, Genre_3) %>% #variables causing issues
+    step_nzv(all_predictors()) %>% 
+    step_normalize(all_numeric_predictors()) %>% 
+    step_dummy(all_nominal_predictors()) %>%
+    step_naomit(Gross)
+
+spline_rec <- full_rec %>%
+     step_ns(Runtime, deg_free = edf) %>% 
+     step_ns(IMDB_Rating, deg_free = edf) %>%
+     step_ns(No_of_Votes, deg_free = edf)
+
+movie_wf <- workflow() %>%
+    add_model(lm_spec) %>%
+    add_recipe(full_rec)
+
+spline_wf <- workflow() %>%
+    add_model(lm_spec) %>%
+    add_recipe(spline_rec)
+
+fit_resamples(
+    movie_wf,
+    resamples = data_cv8, # cv folds
+    metrics = metric_set(mae,rmse,rsq)                     
+) %>% collect_metrics()
+```
 
