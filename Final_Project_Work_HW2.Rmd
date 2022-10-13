@@ -200,7 +200,11 @@ The main caution we want to keep in mind when communicating our work is that our
 It is also important to consider any harms that may come from our analyses. Analyzing and predicting gross revenue of movies can have harmful effects on the performance of movies in box offices. For example, if we use our model to predict the success of a new movie, our model's prediction may affect people's decision as to whether or not to see the movie. This could affect the actual outcome of how movies perform at the box office by introducing bias into people's decision regarding whether to see a newly released movie.
 
 
+# Update your models to use natural splines for some of the quantitative predictors to account for non-linearity (these are GAMs).
+
 ```{r}
+# Build the GAM
+
 gam_spec <- 
   gen_additive_mod() %>%
   set_engine(engine = 'mgcv') %>%
@@ -214,19 +218,31 @@ gam_mod <- fit(gam_spec,
 ```
 
 ```{r}
+# Diagnostics: Check to see if the number of knots is large enough (if p-value is low, increase number of knots)
+
 gam_mod %>% pluck('fit') %>% mgcv::gam.check() 
 ```
 
 ```{r}
+# Visualize: Look at the estimated non-linear functions
+
 gam_mod %>% pluck('fit') %>% plot()
 ```
 
 
 ```{r}
+# Use the edf (round to integer) from above to create a recipe by adding step_ns() for the variables you want model with a non-linear relationship and do CV. Compare this model to one without any splines.
+
 lm_spec_gam <-
   linear_reg() %>%
   set_engine(engine = 'lm') %>%
   set_mode('regression')
+
+# data_cv10 <- imdb_clean %>% 
+#     filter(No_of_Votes < 1500000 & IMDB_Rating < 9) %>% # remove outliers
+#     vfold_cv(v = 10)
+
+data_cv10 <- vfold_cv(imdb_clean, v = 10)
 
 full_rec <- recipe(Gross ~ ., data = imdb_clean) %>%
     step_rm(Series_Title, Released_Year, Overview,
@@ -254,5 +270,130 @@ fit_resamples(
     resamples = data_cv10, # cv folds
     metrics = metric_set(mae,rmse,rsq)                     
 ) %>% collect_metrics()
+
+# This code chunk has an error, but I'm not sure why
+
+# fit_resamples(
+#     spline_wf,
+#     resamples = data_cv10, # cv folds
+#     metrics = metric_set(mae,rmse,rsq)                     
+# ) %>% collect_metrics()
 ```
+
+# Compare insights from variable importance analyses here and the corresponding results from the Investigation 
+
+```{r}
+# Lasso Model Spec with tune
+gam_lasso_spec_tune <- 
+  linear_reg() %>%
+  set_args(mixture = 1, penalty = tune()) %>% ## mixture = 1 indicates Lasso
+  set_engine(engine = 'glmnet') %>% #note we are using a different engine
+  set_mode('regression') 
+
+# Recipe with standardization (!) --> just include all these always
+data_rec <- recipe(Gross ~ ., data = imdb_clean) %>%
+    step_rm(Series_Title, Released_Year, Overview,
+            Director, Star1, Star2, Star3, Star4, Genre_2, Genre_3) %>%
+    step_nzv(all_predictors()) %>% # removes variables with the same value (so duplicates don't mess up model)
+    step_novel(all_nominal_predictors()) %>% # important if you have rare categorical variables 
+    step_normalize(all_numeric_predictors()) %>%  # super important standardization step for LASSO
+    step_dummy(all_nominal_predictors()) %>%  # creates indicator variables for categorical variables
+    step_naomit(Gross)
+
+# Workflow (Recipe + Model)
+lasso_wf_tune <- workflow() %>% 
+  add_recipe(data_rec) %>%
+  add_model(gam_lasso_spec_tune) 
+
+# Tune Model (trying a variety of values of Lambda penalty)
+penalty_grid <- grid_regular(
+  penalty(range = c(-3, 1)),
+  levels = 30)
+
+tune_res <- tune_grid( # new function for tuning parameters
+  lasso_wf_tune, # workflow
+  resamples = data_cv10, # cv folds
+  metrics = metric_set(rmse, mae),
+  grid = penalty_grid # penalty grid defined above
+)
+
+# Visualize Model Evaluation Metrics from Tuning
+autoplot(tune_res) + theme_classic()
+```
+
+# Collect CV Metrics and Select Best Model
+
+```{r}
+
+# Summarize Model Evaluation Metrics (CV)
+collect_metrics(tune_res) %>%
+  filter(.metric == 'rmse') %>% # or choose mae
+  select(penalty, rmse = mean) 
+
+best_penalty <- select_best(tune_res, metric = 'rmse') # choose penalty value based on lowest mae or rmse
+```
+
+# Fit Final Model
+
+```{r}
+
+# Fit Final Model
+final_wf <- finalize_workflow(lasso_wf_tune, best_penalty) # incorporates penalty value to workflow
+
+final_fit <- fit(final_wf, data = imdb_clean)
+
+tidy(final_fit)
+```
+
+```{r}
+# Final ("best") model predictors and coefficients
+
+final_fit %>% tidy() %>% filter(estimate != 0)
+```
+
+# Visualize Residuals
+
+```{r}
+
+# Visualize Residuals
+lasso_mod_out <- final_fit %>%
+    predict(new_data = imdb_clean) %>%
+    bind_cols(imdb_clean) %>%
+    mutate(resid = Gross - .pred)
+
+ggplot(lasso_mod_out, aes(x = .pred, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out, aes(x = Runtime, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out, aes(x = IMDB_Rating, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out, aes(x = No_of_Votes, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+```
+
+
+# Compare model performance between your GAM models that the models that assuming linearity.
+
+
+
+# Summarize investigations
+
+Decide on an overall best model based on your investigations so far. To do this, make clear your analysis goals. Predictive accuracy? Interpretability? A combination of both?
+
+
 
