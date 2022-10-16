@@ -23,6 +23,11 @@ library(ggplot2)
 library(tidymodels) 
 library(stringr)
 library(splitstackshape)
+library(tidymodels)
+library(lubridate)
+library(rpart.plot)
+library(cluster)
+library(forcats)
 tidymodels_prefer()
 ```
 
@@ -81,6 +86,8 @@ full_lm_wf <- workflow() %>%
     
 full_model <- fit(full_lm_wf, data = imdb_clean) 
 
+full_modelcv <- fit_resamples(full_lm_wf, resamples = data_cv10, metrics = metric_set(rmse, rsq, mae))
+
 full_model %>% tidy()
 ```
 
@@ -132,11 +139,13 @@ autoplot(tune_res) + theme_classic()
 ```{r}
 
 # Summarize Model Evaluation Metrics (CV)
-collect_metrics(tune_res) %>%
+lasso_mod <- collect_metrics(tune_res) %>%
   filter(.metric == 'rmse') %>% # or choose mae
   select(penalty, rmse = mean) 
 
 best_penalty <- select_best(tune_res, metric = 'rmse') # choose penalty value based on lowest mae or rmse
+
+lasso_mod
 ```
 
 # Fit Final Model
@@ -147,6 +156,8 @@ best_penalty <- select_best(tune_res, metric = 'rmse') # choose penalty value ba
 final_wf <- finalize_workflow(lasso_wf_tune, best_penalty) # incorporates penalty value to workflow
 
 final_fit <- fit(final_wf, data = imdb_clean)
+
+lasso_fit <- fit_resamples(final_wf, resamples = data_cv10, metrics = metric_set(rmse, rsq, mae))
 
 tidy(final_fit)
 ```
@@ -224,9 +235,29 @@ gam_mod %>% pluck('fit') %>% mgcv::gam.check()
 ```
 
 ```{r}
+gam_mod %>% pluck('fit') %>% summary() 
+```
+
+
+```{r}
 # Visualize: Look at the estimated non-linear functions
 
 gam_mod %>% pluck('fit') %>% plot()
+```
+
+```{r}
+spline_rec <- recipe(Gross ~ ., data = imdb_clean) %>%
+    step_rm(Series_Title, Released_Year, Overview,
+            Director, Star1, Star2, Star3, Star4, Genre_2, Genre_3) %>% #variables causing issues
+    step_nzv(all_predictors()) %>% 
+    step_normalize(all_numeric_predictors()) %>% 
+    step_dummy(all_nominal_predictors()) %>%
+    step_naomit(Gross) %>%
+    step_ns(Runtime, deg_free = 2) %>%
+    step_ns(No_of_Votes, deg_free = 6)
+
+
+spline_rec %>% prep(imdb_clean) %>% juice()
 ```
 
 
@@ -238,47 +269,36 @@ lm_spec_gam <-
   set_engine(engine = 'lm') %>%
   set_mode('regression')
 
-# data_cv10 <- imdb_clean %>% 
-#     filter(No_of_Votes < 1500000 & IMDB_Rating < 9) %>% # remove outliers
-#     vfold_cv(v = 10)
-
-data_cv10 <- vfold_cv(imdb_clean, v = 10)
-
-full_rec <- recipe(Gross ~ ., data = imdb_clean) %>%
-    step_rm(Series_Title, Released_Year, Overview,
-            Director, Star1, Star2, Star3, Star4, Genre_2, Genre_3) %>% #variables causing issues
-    step_nzv(all_predictors()) %>% 
-    step_normalize(all_numeric_predictors()) %>% 
-    step_dummy(all_nominal_predictors()) %>%
-    step_naomit(Gross)
-
-spline_rec <- full_rec %>%
-     step_ns(Runtime, deg_free = 2) %>% 
-    step_ns(Meta_score, deg_free = 2) %>%
-     step_ns(No_of_Votes, deg_free = 6)
-
-movie_wf <- workflow() %>%
-    add_model(lm_spec) %>%
-    add_recipe(full_rec)
 
 spline_wf <- workflow() %>%
     add_model(lm_spec) %>%
     add_recipe(spline_rec)
 
-fit_resamples(
-    movie_wf,
-    resamples = data_cv10, # cv folds
-    metrics = metric_set(mae,rmse,rsq)                     
-) %>% collect_metrics()
+cv_output <- fit_resamples( 
+  spline_wf, # workflow
+  resamples = data_cv10, # cv folds
+  metrics = metric_set(mae,rmse,rsq)
+)
 
-# This code chunk has an error, but I'm not sure why
+cv_output %>% collect_metrics()
 
-# fit_resamples(
-#     spline_wf,
-#     resamples = data_cv10, # cv folds
-#     metrics = metric_set(mae,rmse,rsq)                     
-# ) %>% collect_metrics()
 ```
+
+```{r}
+new_mod <- spline_wf %>%
+  fit(data = imdb_clean)
+
+new_mod %>%
+  tidy() 
+
+new_mod %>% 
+  tidy() %>% 
+  arrange(desc(abs(statistic)))
+
+new_modcv <- fit_resamples(spline_wf, resamples = data_cv10, metrics = metric_set(mae, rmse, rsq))
+```
+
+
 
 # Compare insights from variable importance analyses here and the corresponding results from the Investigation 
 
@@ -301,7 +321,7 @@ data_rec <- recipe(Gross ~ ., data = imdb_clean) %>%
     step_naomit(Gross)
 
 # Workflow (Recipe + Model)
-lasso_wf_tune <- workflow() %>% 
+lasso_wf_tune1 <- workflow() %>% 
   add_recipe(data_rec) %>%
   add_model(gam_lasso_spec_tune) 
 
@@ -310,15 +330,15 @@ penalty_grid <- grid_regular(
   penalty(range = c(-3, 1)),
   levels = 30)
 
-tune_res <- tune_grid( # new function for tuning parameters
-  lasso_wf_tune, # workflow
+tune_res1 <- tune_grid( # new function for tuning parameters
+  lasso_wf_tune1, # workflow
   resamples = data_cv10, # cv folds
   metrics = metric_set(rmse, mae),
   grid = penalty_grid # penalty grid defined above
 )
 
 # Visualize Model Evaluation Metrics from Tuning
-autoplot(tune_res) + theme_classic()
+autoplot(tune_res1) + theme_classic()
 ```
 
 # Collect CV Metrics and Select Best Model
@@ -330,7 +350,7 @@ collect_metrics(tune_res) %>%
   filter(.metric == 'rmse') %>% # or choose mae
   select(penalty, rmse = mean) 
 
-best_penalty <- select_best(tune_res, metric = 'rmse') # choose penalty value based on lowest mae or rmse
+best_penalty1 <- select_best(tune_res1, metric = 'rmse') # choose penalty value based on lowest mae or rmse
 ```
 
 # Fit Final Model
@@ -338,17 +358,17 @@ best_penalty <- select_best(tune_res, metric = 'rmse') # choose penalty value ba
 ```{r}
 
 # Fit Final Model
-final_wf <- finalize_workflow(lasso_wf_tune, best_penalty) # incorporates penalty value to workflow
+final_wf1 <- finalize_workflow(lasso_wf_tune1, best_penalty) # incorporates penalty value to workflow
 
-final_fit <- fit(final_wf, data = imdb_clean)
+final_fit1 <- fit(final_wf1, data = imdb_clean)
 
-tidy(final_fit)
+tidy(final_fit1)
 ```
 
 ```{r}
 # Final ("best") model predictors and coefficients
 
-final_fit %>% tidy() %>% filter(estimate != 0)
+final_fit1 %>% tidy() %>% filter(estimate != 0)
 ```
 
 # Visualize Residuals
@@ -356,30 +376,31 @@ final_fit %>% tidy() %>% filter(estimate != 0)
 ```{r}
 
 # Visualize Residuals
-lasso_mod_out <- final_fit %>%
+lasso_mod_out1 <- new_mod %>%
     predict(new_data = imdb_clean) %>%
     bind_cols(imdb_clean) %>%
     mutate(resid = Gross - .pred)
 
-ggplot(lasso_mod_out, aes(x = .pred, y = resid)) +
+
+ggplot(lasso_mod_out1, aes(x = .pred, y = resid)) +
     geom_point() +
     geom_smooth() +
     geom_hline(yintercept = 0, color = "red") + 
     theme_classic()
 
-ggplot(lasso_mod_out, aes(x = Runtime, y = resid)) +
+ggplot(lasso_mod_out1, aes(x = Runtime, y = resid)) +
     geom_point() +
     geom_smooth() +
     geom_hline(yintercept = 0, color = "red") + 
     theme_classic()
 
-ggplot(lasso_mod_out, aes(x = IMDB_Rating, y = resid)) +
+ggplot(lasso_mod_out1, aes(x = IMDB_Rating, y = resid)) +
     geom_point() +
     geom_smooth() +
     geom_hline(yintercept = 0, color = "red") + 
     theme_classic()
 
-ggplot(lasso_mod_out, aes(x = No_of_Votes, y = resid)) +
+ggplot(lasso_mod_out1, aes(x = No_of_Votes, y = resid)) +
     geom_point() +
     geom_smooth() +
     geom_hline(yintercept = 0, color = "red") + 
@@ -389,11 +410,28 @@ ggplot(lasso_mod_out, aes(x = No_of_Votes, y = resid)) +
 
 # Compare model performance between your GAM models that the models that assuming linearity.
 
+```{r}
+full_modelcv %>% collect_metrics() #OLS
+```
+
+```{r}
+lasso_fit %>% collect_metrics() #LASSO
+```
+
+```{r}
+new_modcv %>% collect_metrics() #GAM
+```
 
 
 # Summarize investigations
 
 Decide on an overall best model based on your investigations so far. To do this, make clear your analysis goals. Predictive accuracy? Interpretability? A combination of both?
 
+We want a combination of both, our spline model has the lowest RMSE but could be difficult to interpret. We need more visualization and analysis before we move forward. However we are confident in moving forward.
 
+# Societal Impact
+
+Being that the data here is about movies, the harm that could come from our analysis would be minimal. 
+Representation of different races, genders, abilities, etc. is an issue in Hollywood/the greater film industry, and it's likely that the harm our model/analysis produces is already in line with the issues that created and maintain this.
+This is because the data we have is on past movies that have come out of this system. This means that whatever has made a movie successful, whether it's due to certain actors or directors, or whatever — this is a standard that has already existed. If we see the movies that have done really well because the cast is predominantly white, well this has been going on a for a long time because Hollywood is racist. Our model can't account for that, but we are aware of it. 
 
