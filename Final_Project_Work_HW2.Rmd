@@ -1,7 +1,7 @@
 ---
 title: 'STAT 253 Final Project'
 author: "Jacob, Julian, Aristo, and Emily"
-date: "September 30, 2022"
+date: "October 17, 2022"
 output: 
   html_document:
     df_print: paged
@@ -36,7 +36,6 @@ tidymodels_prefer()
 ```{r}
 library(readr)
 imdb_top_1000 <- read_csv("~/Desktop/Statistical Machine Learning/R Files/Final Project/imdb_top_1000.csv")
-head(imdb_top_1000)
 ```
 
 # Data Cleaning
@@ -211,7 +210,7 @@ The main caution we want to keep in mind when communicating our work is that our
 It is also important to consider any harms that may come from our analyses. Analyzing and predicting gross revenue of movies can have harmful effects on the performance of movies in box offices. For example, if we use our model to predict the success of a new movie, our model's prediction may affect people's decision as to whether or not to see the movie. This could affect the actual outcome of how movies perform at the box office by introducing bias into people's decision regarding whether to see a newly released movie.
 
 
-# Update your models to use natural splines for some of the quantitative predictors to account for non-linearity (these are GAMs).
+# GAMs Using Splines
 
 ```{r}
 # Build the GAM
@@ -300,7 +299,7 @@ new_modcv <- fit_resamples(spline_wf, resamples = data_cv10, metrics = metric_se
 
 
 
-# Compare insights from variable importance analyses here and the corresponding results from the Investigation 
+# Variable Importance for GAM
 
 ```{r}
 # Lasso Model Spec with tune
@@ -408,7 +407,7 @@ ggplot(lasso_mod_out1, aes(x = No_of_Votes, y = resid)) +
 ```
 
 
-# Compare model performance between your GAM models that the models that assuming linearity.
+# Comparing Model Performance
 
 ```{r}
 full_modelcv %>% collect_metrics() #OLS
@@ -423,15 +422,11 @@ new_modcv %>% collect_metrics() #GAM
 ```
 
 
-# Summarize investigations
+# Summarize Investigations
 
-Decide on an overall best model based on your investigations so far. To do this, make clear your analysis goals. Predictive accuracy? Interpretability? A combination of both?
-
-We want a combination of both, our spline model has the lowest RMSE but could be difficult to interpret. We need more visualization and analysis before we move forward. However we are confident in moving forward.
+The goal of our investigations is to accurately predict a movie's gross box office revenue based on a number of predictors. We compared three different model types: ordinary linear regression (OLS) with all predictors, OLS using LASSO to select a subset of variables, and a GAM using splines to account for nonlinearity. The GAM model has the lowest RMSE but could be difficult to interpret. We are looking forward to continuing our investigations using Decision Trees which may offer a more easily interpreted method for modeling nonlinearity. Ideally, we would like an accurate model that is relatively easy to interpret.
 
 # Societal Impact
 
-Being that the data here is about movies, the harm that could come from our analysis would be minimal. 
-Representation of different races, genders, abilities, etc. is an issue in Hollywood/the greater film industry, and it's likely that the harm our model/analysis produces is already in line with the issues that created and maintain this.
-This is because the data we have is on past movies that have come out of this system. This means that whatever has made a movie successful, whether it's due to certain actors or directors, or whatever — this is a standard that has already existed. If we see the movies that have done really well because the cast is predominantly white, well this has been going on a for a long time because Hollywood is racist. Our model can't account for that, but we are aware of it. 
+In addition to our earlier discussion of societal impacts that our model may have, we want to keep in mind the biases of the Hollywood movie industry. Representation of different races, genders, abilities, etc. is an issue in Hollywood/the greater film industry, and it is likely that the harm our model/analysis produces is already in line with the issues that created and maintain this. This is because the data we have is from past movies that came out of this system. This means that whatever made a movie successful, whether it's due to certain actors, directors, etc., is a standard that already existed. If we see the movies that have done really well have predominantly white casts, then it is likely a result of a longstanding issue of racism in the movie industry. Our model can't account for that, but we are aware of it. 
 
