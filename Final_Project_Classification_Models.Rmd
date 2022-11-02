@@ -54,7 +54,7 @@ imdb_clean$Runtime <- runtime_clean
 
 imdb_clean_class <- imdb_clean %>%
   mutate(success_ratio = revenue/budget) %>%
-  mutate(flop = as.factor(ifelse(success_ratio > 1, 'FALSE', 'TRUE'))) %>%
+  mutate(flop = as.factor(ifelse(success_ratio > 1.5, 'FALSE', 'TRUE'))) %>%
   filter(!is.na(flop))
 
 ```
@@ -75,43 +75,44 @@ rf_spec <- rand_forest() %>%
   set_mode('classification') # change this for regression
 
 # Recipe
-data_rec <- recipe(flop ~ No_of_Votes, data = imdb_clean_class) %>%
+data_rec <- recipe(flop ~ No_of_Votes, Runtime, IMDB_Rating, Meta_score, Genre, popularity, vote_average, vote_count,
+                   data = imdb_clean_class) %>%
   step_naomit()
 
 # Workflows
-data_wf_mtry5 <- workflow() %>%
-  add_model(rf_spec %>% set_args(min_n = 5)) %>%
+data_wf_mtry150 <- workflow() %>%
+  add_model(rf_spec %>% set_args(min_n = 150)) %>%
   add_recipe(data_rec) 
 
 ## Create workflows for min_n = 10, 25, and 50
 
-data_wf_mtry10 <- workflow() %>%
-  add_model(rf_spec %>% set_args(min_n = 10)) %>%
+data_wf_mtry125 <- workflow() %>%
+  add_model(rf_spec %>% set_args(min_n = 125)) %>%
   add_recipe(data_rec)
 
-data_wf_mtry25 <- workflow() %>%
-  add_model(rf_spec %>% set_args(min_n = 25)) %>%
+data_wf_mtry75 <- workflow() %>%
+  add_model(rf_spec %>% set_args(min_n = 75)) %>%
   add_recipe(data_rec)
 
-data_wf_mtry50 <- workflow() %>%
-  add_model(rf_spec %>% set_args(min_n = 50)) %>%
+data_wf_mtry100 <- workflow() %>%
+  add_model(rf_spec %>% set_args(min_n = 100)) %>%
   add_recipe(data_rec)
 ```
 
 ```{r}
 # Fit Models
 set.seed(123) # make sure to run this before each fit so that you have the same 1000 trees
-data_fit_mtry5 <- fit(data_wf_mtry5, data = imdb_clean_class)
+data_fit_mtry150 <- fit(data_wf_mtry150, data = imdb_clean_class)
 
 # Fit models for 10, 25, and 50
 set.seed(123) 
-data_fit_mtry10 <- fit(data_wf_mtry10, data = imdb_clean_class)
+data_fit_mtry125 <- fit(data_wf_mtry125, data = imdb_clean_class)
 
 set.seed(123)
-data_fit_mtry25 <- fit(data_wf_mtry25, data = imdb_clean_class)
+data_fit_mtry75 <- fit(data_wf_mtry75, data = imdb_clean_class)
 
 set.seed(123) 
-data_fit_mtry50 <- fit(data_wf_mtry50, data = imdb_clean_class)
+data_fit_mtry100 <- fit(data_wf_mtry100, data = imdb_clean_class)
 ```
 
 ```{r}
@@ -129,10 +130,10 @@ rf_OOB_output <- function(fit_model, model_label, truth){
 # Evaluate OOB Metrics
 
 data_rf_OOB_output <- bind_rows(
-    rf_OOB_output(data_fit_mtry5,5, imdb_clean_class %>% pull(flop)),
-    rf_OOB_output(data_fit_mtry10,10, imdb_clean_class %>% pull(flop)),
-    rf_OOB_output(data_fit_mtry25,25, imdb_clean_class %>% pull(flop)),
-    rf_OOB_output(data_fit_mtry50,50, imdb_clean_class %>% pull(flop))
+    rf_OOB_output(data_fit_mtry150,150, imdb_clean_class %>% pull(flop)),
+    rf_OOB_output(data_fit_mtry125,125, imdb_clean_class %>% pull(flop)),
+    rf_OOB_output(data_fit_mtry75,75, imdb_clean_class %>% pull(flop)),
+    rf_OOB_output(data_fit_mtry100,100, imdb_clean_class %>% pull(flop))
 )
 
 
@@ -144,7 +145,7 @@ data_rf_OOB_output %>%
 ### Evaluating the Forest
 
 ```{r}
-rf_OOB_output(data_fit_mtry50,50, imdb_clean_class %>% pull(flop)) %>%
+rf_OOB_output(data_fit_mtry125,125, imdb_clean_class %>% pull(flop)) %>%
     conf_mat(truth = class, estimate= .pred_class)
 ```
 
@@ -153,7 +154,7 @@ rf_OOB_output(data_fit_mtry50,50, imdb_clean_class %>% pull(flop)) %>%
 ```{r}
 # Impurity
 
-model_output <-data_fit_mtry50 %>% 
+model_output <-data_fit_mtry125 %>% 
     extract_fit_engine() 
 
 model_output %>% 
@@ -166,7 +167,7 @@ model_output %>% vip::vi() %>% tail()
 ```{r}
 # Permutation
 
-model_output2 <- data_wf_mtry50 %>% 
+model_output2 <- data_wf_mtry125 %>% 
   update_model(rf_spec %>% set_args(importance = "permutation")) %>% #based on permutation
   fit(data = imdb_clean_class) %>% 
     extract_fit_engine() 
