@@ -36,285 +36,30 @@ library(vip)
 # Read in Data
 
 ```{r}
-library(readr)
-imdb_top_1000 <- read_csv("~/Desktop/Statistical Machine Learning/R Files/Final Project/imdb_top_1000.csv")
+imdb_top_1000 <- read_csv("~/Desktop/Statistical Machine Learning/R Files/Final Project/imdb_top_1000_updated.csv")
 ```
 
 # Data Cleaning
 
 ```{r}
 imdb_clean <- imdb_top_1000 %>%
-  select(-Poster_Link, -Certificate) %>%
   cSplit("Genre", sep = ",", direction = "wide") %>%
-  mutate(Gross = log(Gross))
+  mutate(Gross = log(revenue))
 
 runtime_clean <- imdb_top_1000$Runtime %>%
   str_replace(" min", "") %>%
   as.numeric()
 
 imdb_clean$Runtime <- runtime_clean
-```
 
-# Logistic Regression
+imdb_clean_class <- imdb_clean %>%
+  mutate(success_ratio = revenue/budget) %>%
+  mutate(flop = as.factor(ifelse(success_ratio > 1, 'FALSE', 'TRUE'))) %>%
+  filter(!is.na(flop))
 
-```{r}
-# Logistic Regression Model Spec
-logistic_spec <- logistic_reg() %>%
-    set_engine('glm') %>%
-    set_mode('classification')
-
-# Recipe
-logistic_rec <- recipe(___ ~ ., data = imdb_clean) %>%
-    step_normalize(all_numeric_predictors()) %>% 
-    step_dummy(all_nominal_predictors())
-
-# Workflow (Recipe + Model)
-log_wf <- workflow() %>% 
-    add_recipe(logistic_rec) %>%
-    add_model(logistic_spec) 
-
-# Fit Model to Training Data
-log_fit <- fit(log_wf, data = imdb_clean)
-```
-
-### Examining the Logistic Regression Model
-
-```{r}
-# Print out Coefficients
-log_fit %>% tidy()
-
-# Get Exponentiated coefficients + CI
-log_fit %>% tidy() %>%
-  mutate(OR.conf.low = exp(estimate - 1.96*std.error), OR.conf.high = exp(estimate + 1.96*std.error)) %>% # do this first
-  mutate(OR = exp(estimate))
-```
-
-### Making Prediction on Logistic Model
-
-```{r}
-# Make soft (probability) predictions
-predict(log_fit, new_data = ___, type = "prob")
-
-# Make hard (class) predictions (using a default 0.5 probability threshold)
-predict(log_fit, new_data = ___, type = "class")
-```
-
-### Evaluating Logistic Model on Training Data
-
-```{r}
-# Soft predictions
-logistic_output <-  data %>%
-  bind_cols(predict(log_fit, new_data = data, type = 'prob')) 
-
-# Hard predictions (you pick threshold)
-logistic_output <- logistic_output %>%
-  mutate(.pred_class = make_two_class_pred(.pred_REFLEVEL, levels(outcome), threshold = .8)) #Try changing threshold (.5, 0, 1, .2, .8)
-
-# Visualize Soft Predictions
-logistic_output %>%
-  ggplot(aes(x = outcome, y = .pred_OUTCOME)) +
-  geom_boxplot() + 
-  geom_hline(yintercept = 0.5, color='red') +  # try changing threshold
-  labs(y = 'Predicted Probability of Outcome', x = 'Observed Outcome') +
-  theme_classic()
-```
-
-# Calculating Evaluation Metrics
-
-```{r}
-# Confusion Matrix
-logistic_output %>%
-  conf_mat(truth = outcome, estimate = .pred_class)
-
-log_metrics <- metric_set(sens, yardstick::spec, accuracy) # these metrics are based on hard predictions
-
-#sens: sensitivity = chance of correctly predicting second level, given second level (Yes)
-#spec: specificity = chance of correctly predicting first level, given first level (No)
-#accuracy: accuracy = chance of correctly predicting outcome
-
-logistic_output %>% 
-  log_metrics(estimate = .pred_class, truth = outcome, event_level = "second") # set second level of outcome as "success"
-```
-
-### ROC Curve
-
-```{r}
-logistic_roc <- logistic_output %>% 
-    roc_curve(outcome, .pred_OUTCOME, event_level = "second") # set second level of outcome as "success"
-
-autoplot(logistic_roc) + theme_classic()
-```
-
-### Evaluation Metrics Using CV
-
-```{r}
-# CV Fit Model
-log_cv_fit <- fit_resamples(
-    log_wf, 
-    resamples = data_cv10,
-    metrics = metric_set(sens, yardstick::spec, accuracy, roc_auc),
-    control = control_resamples(save_pred = TRUE, event_level = 'second'))  # you need predictions for ROC calculations
-
-collect_metrics(log_cv_fit) #default threshold is 0.5
 ```
 
 
-
-# Logistic Model with LASSO
-
-```{r}
-set.seed(123)
-
-# Make sure you set reference level (to the outcome you are NOT interested in)
-spam <- spam %>%
-  mutate(spam = relevel(factor(spam), ref='not_spam')) #set reference level
-
-data_cv10 <- vfold_cv(spam, v = 10)
-
-
-# Logistic LASSO Regression Model Spec
-logistic_lasso_spec_tune <- logistic_reg() %>%
-    set_engine('glmnet') %>%
-    set_args(mixture = 1, penalty = tune()) %>%
-    set_mode('classification')
-
-# Recipe
-logistic_rec <- recipe(_____, data = spam) %>%
-    step_normalize(all_numeric_predictors()) %>% 
-    step_dummy(all_nominal_predictors())
-
-# Workflow (Recipe + Model)
-log_lasso_wf <- workflow() %>% 
-    add_recipe(logistic_rec) %>%
-    add_model(logistic_lasso_spec_tune) 
-
-# Tune Model (trying a variety of values of Lambda penalty)
-penalty_grid <- grid_regular(
-  penalty(range = c(__,__)), #log10 transformed 
-  levels = 100)
-
-tune_output <- tune_grid( 
-  log_lasso_wf, # workflow
-  resamples = data_cv10, # cv folds
-  metrics = metric_set(roc_auc,accuracy),
-  control = control_resamples(save_pred = TRUE, event_level = 'second'),
-  grid = penalty_grid # penalty grid defined above
-)
-
-# Visualize Model Evaluation Metrics from Tuning
-autoplot(tune_output) + theme_classic()
-```
-
-### Inspecting the Model
-
-```{r}
-# Visualize Model Evaluation Metrics from Tuning
-autoplot(tune_output) + theme_classic()
-```
-
-```{r}
-# Select Penalty
-best_se_penalty <- select_by_one_std_err(tune_output, metric = 'roc_auc', desc(penalty)) # choose penalty value based on the largest penalty within 1 se of the highest CV roc_auc
-best_se_penalty
-
-# Fit Final Model
-final_fit_se <- finalize_workflow(log_lasso_wf, best_se_penalty) %>% # incorporates penalty value to workflow 
-    fit(data = spam)
-
-final_fit_se %>% tidy()
-```
-
-```{r}
-# Comment on Variable Importance
-
-glmnet_output <- final_fit_se %>% extract_fit_engine()
-    
-# Create a boolean matrix (predictors x lambdas) of variable exclusion
-bool_predictor_exclude <- glmnet_output$beta==0
-
-# Loop over each variable
-var_imp <- sapply(seq_len(nrow(bool_predictor_exclude)), function(row) {
-    this_coeff_path <- bool_predictor_exclude[row,]
-    if(sum(this_coeff_path) == ncol(bool_predictor_exclude)){ return(0)}else{
-    return(ncol(bool_predictor_exclude) - which.min(this_coeff_path) + 1)}
-})
-
-# Create a dataset of this information and sort
-var_imp_data <- tibble(
-    var_name = rownames(bool_predictor_exclude),
-    var_imp = var_imp
-)
-var_imp_data %>% arrange(desc(var_imp))
-```
-
-# Evaluation Metrics
-
-```{r}
-
-# CV results for "best lambda"
-tune_output %>%
-    collect_metrics() %>%
-    filter(penalty == best_se_penalty %>% pull(penalty))
-
-# Count up number of spam and not_spam emails in the training data
-spam %>%
-    count(spam) # Name of the outcome variable goes inside count()
-
-# Compute the NIR
-```
-
-### Final Model
-
-```{r}
-# Soft Predictions on Training Data
-final_output <- final_fit_se %>% predict(new_data = spam, type='prob') %>% bind_cols(spam)
-```
-
-```{r}
-# Use soft predictions
-final_output %>%
-    roc_curve(spam,.pred_spam,event_level = 'second') %>%
-    autoplot()
-```
-
-```{r}
-# thresholds in terms of reference level
-threshold_output <- final_output %>%
-    threshold_perf(truth = spam, estimate = .pred_not_spam, thresholds = seq(0,1,by=.01)) 
-
-# J-index v. threshold for not_spam
-threshold_output %>%
-    filter(.metric == 'j_index') %>%
-    ggplot(aes(x = .threshold, y = .estimate)) +
-    geom_line() +
-    labs(y = 'J-index', x = 'threshold') +
-    theme_classic()
-
-threshold_output %>%
-    filter(.metric == 'j_index') %>%
-    arrange(desc(.estimate))
-
-
-# Distance v. threshold for not_spam
-
-threshold_output %>%
-    filter(.metric == 'distance') %>%
-    ggplot(aes(x = .threshold, y = .estimate)) +
-    geom_line() +
-    labs(y = 'Distance', x = 'threshold') +
-    theme_classic()
-
-threshold_output %>%
-    filter(.metric == 'distance') %>%
-    arrange(.estimate)
-
-
-log_metrics <- metric_set(accuracy,sens,yardstick::spec)
-
-final_output %>%
-    mutate(.pred_class = make_two_class_pred(.pred_not_spam, levels(spam), threshold = ___ )) %>%
-    log_metrics(truth = spam, estimate = .pred_class, event_level = 'second')
-```
 
 # Bagging and Random Forests
 
@@ -322,44 +67,51 @@ final_output %>%
 # Model Specification
 rf_spec <- rand_forest() %>%
   set_engine(engine = 'ranger') %>% 
-  set_args(mtry = NULL, # size of random subset of variables; default is floor(sqrt(number of total predictors))
+  set_args(mtry = 4, # size of random subset of variables; default is floor(sqrt(number of total predictors))
            trees = 1000, # Number of trees
-           min_n = 2,
+           min_n = NULL,
            probability = FALSE, # FALSE: get hard predictions (not needed for regression)
            importance = 'impurity') %>% # we'll come back to this at the end
   set_mode('classification') # change this for regression
 
 # Recipe
-data_rec <- recipe(class ~ ., data = land)
+data_rec <- recipe(flop ~ No_of_Votes, data = imdb_clean_class) %>%
+  step_naomit()
 
 # Workflows
-data_wf_mtry2 <- workflow() %>%
-  add_model(rf_spec %>% set_args(mtry = 2)) %>%
+data_wf_mtry5 <- workflow() %>%
+  add_model(rf_spec %>% set_args(min_n = 5)) %>%
+  add_recipe(data_rec) 
+
+## Create workflows for min_n = 10, 25, and 50
+
+data_wf_mtry10 <- workflow() %>%
+  add_model(rf_spec %>% set_args(min_n = 10)) %>%
   add_recipe(data_rec)
 
-## Create workflows for mtry = 12, 74, and 147
+data_wf_mtry25 <- workflow() %>%
+  add_model(rf_spec %>% set_args(min_n = 25)) %>%
+  add_recipe(data_rec)
 
-data_wf_mtry12 <- 
-
-data_wf_mtry74 <- 
-
-data_wf_mtry147 <- 
+data_wf_mtry50 <- workflow() %>%
+  add_model(rf_spec %>% set_args(min_n = 50)) %>%
+  add_recipe(data_rec)
 ```
 
 ```{r}
 # Fit Models
 set.seed(123) # make sure to run this before each fit so that you have the same 1000 trees
-data_fit_mtry2 <- fit(data_wf_mtry2, data = land)
+data_fit_mtry5 <- fit(data_wf_mtry5, data = imdb_clean_class)
 
-# Fit models for 12, 74, 147
+# Fit models for 10, 25, and 50
 set.seed(123) 
-data_fit_mtry12 <- 
+data_fit_mtry10 <- fit(data_wf_mtry10, data = imdb_clean_class)
 
 set.seed(123)
-data_fit_mtry74 <- 
+data_fit_mtry25 <- fit(data_wf_mtry25, data = imdb_clean_class)
 
 set.seed(123) 
-data_fit_mtry147 <- 
+data_fit_mtry50 <- fit(data_wf_mtry50, data = imdb_clean_class)
 ```
 
 ```{r}
@@ -371,19 +123,16 @@ rf_OOB_output <- function(fit_model, model_label, truth){
           label = model_label
       )
 }
-
-#check out the function output
-rf_OOB_output(data_fit_mtry2,2, land %>% pull(class))
 ```
 
 ```{r}
 # Evaluate OOB Metrics
 
 data_rf_OOB_output <- bind_rows(
-    rf_OOB_output(data_fit_mtry2,2, land %>% pull(class)),
-    rf_OOB_output(data_fit_mtry12,12, land %>% pull(class)),
-    rf_OOB_output(data_fit_mtry74,74, land %>% pull(class)),
-    rf_OOB_output(data_fit_mtry147,147, land %>% pull(class))
+    rf_OOB_output(data_fit_mtry5,5, imdb_clean_class %>% pull(flop)),
+    rf_OOB_output(data_fit_mtry10,10, imdb_clean_class %>% pull(flop)),
+    rf_OOB_output(data_fit_mtry25,25, imdb_clean_class %>% pull(flop)),
+    rf_OOB_output(data_fit_mtry50,50, imdb_clean_class %>% pull(flop))
 )
 
 
@@ -395,7 +144,7 @@ data_rf_OOB_output %>%
 ### Evaluating the Forest
 
 ```{r}
-rf_OOB_output(data_fit_mtry12,12, land %>% pull(class)) %>%
+rf_OOB_output(data_fit_mtry50,50, imdb_clean_class %>% pull(flop)) %>%
     conf_mat(truth = class, estimate= .pred_class)
 ```
 
@@ -404,11 +153,11 @@ rf_OOB_output(data_fit_mtry12,12, land %>% pull(class)) %>%
 ```{r}
 # Impurity
 
-model_output <-data_fit_mtry12 %>% 
+model_output <-data_fit_mtry50 %>% 
     extract_fit_engine() 
 
 model_output %>% 
-    vip(num_features = 30) + theme_classic() #based on impurity
+    vip(num_features = 10) + theme_classic() #based on impurity, 10 meaning the top 10
 
 model_output %>% vip::vi() %>% head()
 model_output %>% vip::vi() %>% tail()
@@ -417,13 +166,13 @@ model_output %>% vip::vi() %>% tail()
 ```{r}
 # Permutation
 
-model_output2 <- data_wf_mtry12 %>% 
+model_output2 <- data_wf_mtry50 %>% 
   update_model(rf_spec %>% set_args(importance = "permutation")) %>% #based on permutation
-  fit(data = land) %>% 
+  fit(data = imdb_clean_class) %>% 
     extract_fit_engine() 
 
 model_output2 %>% 
-    vip(num_features = 30) + theme_classic()
+    vip(num_features = 10) + theme_classic()
 
 
 model_output2 %>% vip::vi() %>% head()
