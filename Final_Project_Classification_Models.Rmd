@@ -12,6 +12,9 @@ output:
 knitr::opts_chunk$set(echo = TRUE, error=TRUE, message=FALSE, warning=FALSE)
 ```
 
+
+Classification Question: Which predictor strongly influences movie revenue?
+
 # Library Statements 
 
 ```{r}
@@ -36,7 +39,7 @@ library(vip)
 # Read in Data
 
 ```{r}
-imdb_top_1000 <- read_csv("~/Desktop/Statistical Machine Learning/R Files/Final Project/imdb_top_1000_updated.csv")
+imdb_top_1000 <- read_csv("imdb_top_1000_updated.csv")
 ```
 
 # Data Cleaning
@@ -81,21 +84,21 @@ data_rec <- recipe(flop ~ No_of_Votes, Runtime, IMDB_Rating, Meta_score, Genre, 
 
 # Workflows
 data_wf_mtry150 <- workflow() %>%
-  add_model(rf_spec %>% set_args(min_n = 150)) %>%
+  add_model(rf_spec %>% set_args(mtry = 150)) %>%
   add_recipe(data_rec) 
 
 ## Create workflows for min_n = 10, 25, and 50
 
 data_wf_mtry125 <- workflow() %>%
-  add_model(rf_spec %>% set_args(min_n = 125)) %>%
+  add_model(rf_spec %>% set_args(mtry = 125)) %>%
   add_recipe(data_rec)
 
 data_wf_mtry75 <- workflow() %>%
-  add_model(rf_spec %>% set_args(min_n = 75)) %>%
+  add_model(rf_spec %>% set_args(mtry = 75)) %>%
   add_recipe(data_rec)
 
 data_wf_mtry100 <- workflow() %>%
-  add_model(rf_spec %>% set_args(min_n = 100)) %>%
+  add_model(rf_spec %>% set_args(mtry = 100)) %>%
   add_recipe(data_rec)
 ```
 
@@ -120,10 +123,12 @@ data_fit_mtry100 <- fit(data_wf_mtry100, data = imdb_clean_class)
 rf_OOB_output <- function(fit_model, model_label, truth){
     tibble(
           .pred_class = fit_model %>% extract_fit_engine() %>% pluck('predictions'), #OOB predictions
-          class = truth,
+          flop = truth,
           label = model_label
       )
 }
+
+rf_OOB_output(data_fit_mtry150,150, imdb_clean_class %>% pull(flop))
 ```
 
 ```{r}
@@ -139,7 +144,7 @@ data_rf_OOB_output <- bind_rows(
 
 data_rf_OOB_output %>% 
     group_by(label) %>%
-    accuracy(truth = class, estimate = .pred_class)
+    accuracy(truth = flop, estimate = .pred_class)
 ```
 
 ### Evaluating the Forest
@@ -180,13 +185,81 @@ model_output2 %>% vip::vi() %>% head()
 model_output2 %>% vip::vi() %>% tail()
 ```
 
+# Logistic Regression
+
+```{r}
+set.seed(123)
+
+# Logistic Regression Model Spec
+logistic_spec <- logistic_reg() %>%
+    set_engine('glm') %>%
+    set_mode('classification')
+# Recipe
+logistic_rec <- recipe(flop ~ IMDB_Rating, No_of_Votes, gross,
+                   data = imdb_clean_class)
+# Workflow (Recipe + Model)
+log_wf <- workflow() %>%
+    add_recipe(logistic_rec) %>%
+    add_model(logistic_spec)
+# Fit Model
+log_fit <- fit(log_wf, data = imdb_clean_class)
+
+tidy(log_fit)
+```
+
+
+```{r}
+log_fit %>% tidy() %>%
+  mutate(OR = exp(estimate))
+```
+```{r}
+predict(log_fit, new_data = data.frame(IMDB_Rating = 5, No_of_Votes = 500000, gross = 18), type = "prob"
+)
+```
+
+
+```{r}
+predict(log_fit, new_data = data.frame(IMDB_Rating = 5, No_of_Votes = 500000, gross = 18), type = "class"
+)
+```
+
+A movie with an IMDB Rating of 5 with 500,000 votes and gross of 18 will be a flop.
+
+# Model Reflection
+
+
+Classification - Methods
+
+Indicate at least 2 different methods used to answer your classification research question.
+
+Random Forests and Logistic Regression
+
+Describe what you did to evaluate the models explored.
+
+?
+
+Indicate how you estimated quantitative evaluation metrics.
+
+?
+
+Describe the goals / purpose of the methods used in the overall context of your research investigations.
+
+We are attempting to determine if a movie will flop based on its difference in budget and gross.
+
+Classification - Results
+
+Summarize your final model and justify your model choice (see below for ways to justify your choice).
 
 
 
+Compare the different classification models tried in light of evaluation metrics, variable importance, and data context.
+Display evaluation metrics for different models in a clean, organized way. This display should include both the estimated metric as well as its standard deviation. (This won’t be available from OOB error estimation. If using OOB, don’t worry about reporting the SD.)
+Broadly summarize conclusions from looking at these evaluation metrics and their measures of uncertainty.
+
+?
+
+Classification - Conclusions - Interpret evaluation metric(s) for the final model in context. Does the model show an acceptable amount of error? - If using OOB error estimation, display the test (OOB) confusion matrix, and use it to interpret the strengths and weaknesses of the final model. Summarization should show evidence of acknowledging the data context in thinking about the sensibility of these results.
 
 
-
-
-
-
+/
 
