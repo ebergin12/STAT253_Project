@@ -236,11 +236,11 @@ Random Forests and Logistic Regression
 
 Describe what you did to evaluate the models explored.
 
-?
+We underwent a random forests classification model utilizing OOB evaluation metrics. We also utilized a logistic regression model to create hard predictions.
 
 Indicate how you estimated quantitative evaluation metrics.
 
-?
+Included in the above code is OOB importance measures and logistic regression test cases.
 
 Describe the goals / purpose of the methods used in the overall context of your research investigations.
 
