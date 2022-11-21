@@ -1,0 +1,603 @@
+---
+title: "Final Project Code ALL"
+author: "Emily, Julian, Jacob, and Aristo"
+date: '2022-11-20'
+output: 
+  html_document:
+    df_print: paged
+    code_download: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error=TRUE, message=FALSE, warning=FALSE)
+```
+
+# Library Statements 
+
+```{r}
+library(ISLR)
+library(dplyr)
+library(readr)
+library(broom)
+library(ggplot2)
+library(tidymodels) 
+library(stringr)
+library(splitstackshape)
+library(tidymodels)
+library(lubridate)
+library(rpart.plot)
+library(cluster)
+library(forcats)
+tidymodels_prefer()
+library(probably) #install.packages('probably')
+library(vip)
+```
+
+# Read in Data
+
+```{r}
+imdb_top_1000 <- read_csv("~/Desktop/Statistical Machine Learning/R Files/Final Project/imdb_top_1000_CLEAN.csv")
+```
+
+# Data Cleaning
+
+```{r}
+imdb_clean <- imdb_top_1000 %>%
+  cSplit("Genre", sep = ",", direction = "wide") %>%
+  mutate(Gross = log(Revenue-Budget)) %>%
+  select(-...15)
+
+runtime_clean <- imdb_top_1000$Runtime %>%
+  str_replace(" min", "") %>%
+  as.numeric()
+
+imdb_clean$Runtime <- runtime_clean
+
+imdb_clean <- imdb_clean %>%
+  filter(Gross != "-Inf")
+```
+
+# Creation of CV Folds
+
+```{r}
+data_cv10 <- vfold_cv(imdb_clean, v = 10)
+```
+
+# Model Spec for Linear Regression Model
+
+```{r}
+lm_spec <-
+    linear_reg() %>% 
+    set_engine(engine = 'lm') %>% 
+    set_mode('regression')
+```
+
+# Recipes and Workflows
+
+```{r}
+full_rec <- recipe(Gross ~ Runtime + IMDB_Rating + Meta_score + 
+                   No_of_Votes + Genre_1, data = imdb_clean) %>%
+    step_nzv(all_predictors()) %>% 
+    step_normalize(all_numeric_predictors()) %>% 
+    step_dummy(all_nominal_predictors()) %>%
+    step_naomit(Gross)
+    
+full_lm_wf <- workflow() %>%
+    add_recipe(full_rec) %>%
+    add_model(lm_spec)
+    
+full_model <- fit(full_lm_wf, data = imdb_clean) 
+
+full_modelcv <- fit_resamples(full_lm_wf, resamples = data_cv10, metrics = metric_set(rmse, rsq, mae))
+
+full_model %>% tidy()
+```
+
+
+# LASSO - Fit and Tune Models
+
+```{r}
+
+# Lasso Model Spec with tune
+lm_lasso_spec_tune <- 
+  linear_reg() %>%
+  set_args(mixture = 1, penalty = tune()) %>% ## mixture = 1 indicates Lasso
+  set_engine(engine = 'glmnet') %>% #note we are using a different engine
+  set_mode('regression') 
+
+# Recipe with standardization (!) --> just include all these always
+data_rec <- recipe(Gross ~ Runtime + IMDB_Rating + Meta_score + 
+                   No_of_Votes + Genre_1, data = imdb_clean) %>%
+    step_nzv(all_predictors()) %>% # removes variables with the same value (so duplicates don't mess up model)
+    step_novel(all_nominal_predictors()) %>% # important if you have rare categorical variables 
+    step_normalize(all_numeric_predictors()) %>%  # super important standardization step for LASSO
+    step_dummy(all_nominal_predictors()) %>%  # creates indicator variables for categorical variables
+    step_naomit(Gross)
+
+# Workflow (Recipe + Model)
+lasso_wf_tune <- workflow() %>% 
+  add_recipe(data_rec) %>%
+  add_model(lm_lasso_spec_tune) 
+
+# Tune Model (trying a variety of values of Lambda penalty)
+penalty_grid <- grid_regular(
+  penalty(range = c(-3, 1)),
+  levels = 30)
+
+tune_res <- tune_grid( # new function for tuning parameters
+  lasso_wf_tune, # workflow
+  resamples = data_cv10, # cv folds
+  metrics = metric_set(rmse, mae),
+  grid = penalty_grid # penalty grid defined above
+)
+
+# Visualize Model Evaluation Metrics from Tuning
+autoplot(tune_res) + theme_classic()
+```
+
+# Collect CV Metrics and Select Best Model
+
+```{r}
+
+# Summarize Model Evaluation Metrics (CV)
+lasso_mod <- collect_metrics(tune_res) %>%
+  filter(.metric == 'rmse') %>% # or choose mae
+  select(penalty, rmse = mean) 
+
+best_penalty <- select_best(tune_res, metric = 'rmse') # choose penalty value based on lowest mae or rmse
+
+lasso_mod
+```
+
+# Fit Final Model
+
+```{r}
+
+# Fit Final Model
+final_wf <- finalize_workflow(lasso_wf_tune, best_penalty) # incorporates penalty value to workflow
+
+final_fit <- fit(final_wf, data = imdb_clean)
+
+lasso_fit <- fit_resamples(final_wf, resamples = data_cv10, metrics = metric_set(rmse, rsq, mae))
+
+tidy(final_fit)
+```
+
+```{r}
+# Final ("best") model predictors and coefficients
+
+final_fit %>% tidy() %>% filter(estimate != 0)
+```
+
+# Visualize Residuals
+
+```{r}
+
+# Visualize Residuals
+lasso_mod_out <- final_fit %>%
+    predict(new_data = imdb_clean) %>%
+    bind_cols(imdb_clean) %>%
+    mutate(resid = Gross - .pred)
+
+ggplot(lasso_mod_out, aes(x = .pred, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out, aes(x = Runtime, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out, aes(x = IMDB_Rating, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out, aes(x = No_of_Votes, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+```
+
+
+The overall goal of our linear regression model is to predict a movie's gross box office revenue based on a number of predictors. The goal of our initial investigation was to determine which subset of predictors are the most important for inclusion in our model. In order to determine the "best" linear regression model to achieve our analysis goals, we utilized the LASSO algorithm. The goal of LASSO is to decrease variance in our model by constraining the coefficient estimates and discouraging the inclusion of weakly informative predictors through the use of a tuning parameter. This improves the predictive accuracy of our model. We chose this algorithm over the best subset selection algorithm because LASSO is substantially more computationally efficient. Furthermore, since our main analysis goal is predictive accuracy, we decided against using forward stepwise or backwards stepwise selection because these algorithms do not guarantee the best overall model. A model using a smaller subset of variables may have increased interpretability, but this would come at the expense of predictive accuracy.
+
+The main caution we want to keep in mind when communicating our work is that our model may be bias against new names in the movie industry. The model cannot determine a director, actor, or actresses' talent. It only bases its predictions off of how previous movies that individual was involved in previously performed. Furthermore, the inclusion of the number of votes predictor in our model raises further concerns of potential bias. Our initial evaluation of the residual vs. predictor plot revealed a textbook case of heteroscedasticity. Performing a log transformation on our outcome variable, gross revenue, improved this issue. However, there is still a slight pattern noticeable in the residual vs. predictor plot. Analysis of the residual vs. quantitative predictor plots reveals the number of votes predictor as the likely source of this error. The caution to keep in mind with the inclusion of this predictor is the idea of participation bias. In further investigations, we intend to evaluate whether to "override" the LASSO results and exclude the number of votes predictor from the model if we determine that it is introducing bias into our model.
+
+It is also important to consider any harms that may come from our analyses. Analyzing and predicting gross revenue of movies can have harmful effects on the performance of movies in box offices. For example, if we use our model to predict the success of a new movie, our model's prediction may affect people's decision as to whether or not to see the movie. This could affect the actual outcome of how movies perform at the box office by introducing bias into people's decision regarding whether to see a newly released movie.
+
+
+# GAMs Using Splines
+
+```{r}
+# Build the GAM
+
+gam_spec <- 
+  gen_additive_mod() %>%
+  set_engine(engine = 'mgcv') %>%
+  set_mode('regression') 
+
+gam_mod <- fit(gam_spec,
+    Gross ~ s(Runtime) + IMDB_Rating + s(Meta_score) + s(No_of_Votes) + Genre_1,
+    data = imdb_clean 
+)
+
+```
+
+```{r}
+# Diagnostics: Check to see if the number of knots is large enough (if p-value is low, increase number of knots)
+
+gam_mod %>% pluck('fit') %>% mgcv::gam.check() 
+```
+
+```{r}
+gam_mod %>% pluck('fit') %>% summary() 
+```
+
+
+```{r}
+# Visualize: Look at the estimated non-linear functions
+
+gam_mod %>% pluck('fit') %>% plot()
+```
+
+```{r}
+spline_rec <- recipe(Gross ~ Runtime + IMDB_Rating + Meta_score + 
+                   No_of_Votes + Genre_1, data = imdb_clean) %>%
+    step_nzv(all_predictors()) %>% 
+    step_normalize(all_numeric_predictors()) %>% 
+    step_dummy(all_nominal_predictors()) %>%
+    step_naomit(Gross) %>%
+    step_ns(Runtime, deg_free = 2) %>%
+    step_ns(No_of_Votes, deg_free = 6)
+
+
+spline_rec %>% prep(imdb_clean) %>% juice()
+```
+
+
+```{r}
+# Use the edf (round to integer) from above to create a recipe by adding step_ns() for the variables you want model with a non-linear relationship and do CV. Compare this model to one without any splines.
+
+lm_spec_gam <-
+  linear_reg() %>%
+  set_engine(engine = 'lm') %>%
+  set_mode('regression')
+
+
+spline_wf <- workflow() %>%
+    add_model(lm_spec) %>%
+    add_recipe(spline_rec)
+
+cv_output <- fit_resamples( 
+  spline_wf, # workflow
+  resamples = data_cv10, # cv folds
+  metrics = metric_set(mae,rmse,rsq)
+)
+
+cv_output %>% collect_metrics()
+
+```
+
+```{r}
+new_mod <- spline_wf %>%
+  fit(data = imdb_clean)
+
+new_mod %>%
+  tidy() 
+
+new_mod %>% 
+  tidy() %>% 
+  arrange(desc(abs(statistic)))
+
+new_modcv <- fit_resamples(spline_wf, resamples = data_cv10, metrics = metric_set(mae, rmse, rsq))
+```
+
+
+
+# Variable Importance for GAM
+
+```{r}
+# Lasso Model Spec with tune
+gam_lasso_spec_tune <- 
+  linear_reg() %>%
+  set_args(mixture = 1, penalty = tune()) %>% ## mixture = 1 indicates Lasso
+  set_engine(engine = 'glmnet') %>% #note we are using a different engine
+  set_mode('regression') 
+
+# Recipe with standardization (!) --> just include all these always
+data_rec <- recipe(Gross ~ Runtime + IMDB_Rating + Meta_score + 
+                   No_of_Votes + Genre_1, data = imdb_clean) %>%
+    step_nzv(all_predictors()) %>% # removes variables with the same value (so duplicates don't mess up model)
+    step_novel(all_nominal_predictors()) %>% # important if you have rare categorical variables 
+    step_normalize(all_numeric_predictors()) %>%  # super important standardization step for LASSO
+    step_dummy(all_nominal_predictors()) %>%  # creates indicator variables for categorical variables
+    step_naomit(Gross)
+
+# Workflow (Recipe + Model)
+lasso_wf_tune1 <- workflow() %>% 
+  add_recipe(data_rec) %>%
+  add_model(gam_lasso_spec_tune) 
+
+# Tune Model (trying a variety of values of Lambda penalty)
+penalty_grid <- grid_regular(
+  penalty(range = c(-3, 1)),
+  levels = 30)
+
+tune_res1 <- tune_grid( # new function for tuning parameters
+  lasso_wf_tune1, # workflow
+  resamples = data_cv10, # cv folds
+  metrics = metric_set(rmse, mae),
+  grid = penalty_grid # penalty grid defined above
+)
+
+# Visualize Model Evaluation Metrics from Tuning
+autoplot(tune_res1) + theme_classic()
+```
+
+# Collect CV Metrics and Select Best Model
+
+```{r}
+
+# Summarize Model Evaluation Metrics (CV)
+collect_metrics(tune_res) %>%
+  filter(.metric == 'rmse') %>% # or choose mae
+  select(penalty, rmse = mean) 
+
+best_penalty1 <- select_best(tune_res1, metric = 'rmse') # choose penalty value based on lowest mae or rmse
+```
+
+# Fit Final Model
+
+```{r}
+
+# Fit Final Model
+final_wf1 <- finalize_workflow(lasso_wf_tune1, best_penalty) # incorporates penalty value to workflow
+
+final_fit1 <- fit(final_wf1, data = imdb_clean)
+
+tidy(final_fit1)
+```
+
+```{r}
+# Final ("best") model predictors and coefficients
+
+final_fit1 %>% tidy() %>% filter(estimate != 0)
+```
+
+# Visualize Residuals
+
+```{r}
+
+# Visualize Residuals
+lasso_mod_out1 <- new_mod %>%
+    predict(new_data = imdb_clean) %>%
+    bind_cols(imdb_clean) %>%
+    mutate(resid = Gross - .pred)
+
+
+ggplot(lasso_mod_out1, aes(x = .pred, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out1, aes(x = Runtime, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out1, aes(x = IMDB_Rating, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out1, aes(x = No_of_Votes, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+```
+
+
+# Comparing Model Performance
+
+```{r}
+full_modelcv %>% collect_metrics() #OLS
+```
+
+```{r}
+lasso_fit %>% collect_metrics() #LASSO
+```
+
+```{r}
+new_modcv %>% collect_metrics() #GAM
+```
+
+
+# Summarize Investigations
+
+The goal of our investigations is to accurately predict a movie's gross box office gross revenue based on a number of predictors. We compared three different model types: ordinary linear regression (OLS) with all predictors, OLS using LASSO to select a subset of variables, and a GAM using splines to account for nonlinearity. The GAM model has the lowest RMSE but could be difficult to interpret. We are looking forward to continuing our investigations using Decision Trees which may offer a more easily interpreted method for modeling nonlinearity. Ideally, we would like an accurate model that is relatively easy to interpret.
+
+# Societal Impact
+
+In addition to our earlier discussion of societal impacts that our model may have, we want to keep in mind the biases of the Hollywood movie industry. Representation of different races, genders, abilities, etc. is an issue in Hollywood/the greater film industry, and it is likely that the harm our model/analysis produces is already in line with the issues that created and maintain this. This is because the data we have is from past movies that came out of this system. This means that whatever made a movie successful, whether it's due to certain actors, directors, etc., is a standard that already existed. If we see the movies that have done really well have predominantly white casts, then it is likely a result of a longstanding issue of racism in the movie industry. Our model can't account for that, but we are aware of it. 
+
+
+```{r}
+imdb_clean_class <- imdb_clean %>%
+  mutate(success_ratio = Revenue/Budget) %>%
+  mutate(flop = as.factor(ifelse(success_ratio > 1.5, 'FALSE', 'TRUE'))) %>%
+  filter(!is.na(flop)) %>%
+  filter(Gross != "NaN") %>%
+  filter(success_ratio != "Inf") %>%
+  filter(Budget > 10)
+```
+
+# Bagging and Random Forests
+
+```{r}
+# Model Specification
+rf_spec <- rand_forest() %>%
+  set_engine(engine = 'ranger') %>% 
+  set_args(mtry = 4, # size of random subset of variables; default is floor(sqrt(number of total predictors))
+           trees = 1000, # Number of trees
+           min_n = NULL,
+           probability = FALSE, # FALSE: get hard predictions (not needed for regression)
+           importance = 'impurity') %>% # we'll come back to this at the end
+  set_mode('classification') # change this for regression
+
+# Recipe
+data_rec <- recipe(flop ~ No_of_Votes + Runtime + IMDB_Rating + Meta_score + Genre_1,
+                   data = imdb_clean_class) %>%
+  step_naomit(flop, No_of_Votes, Runtime, IMDB_Rating, Meta_score, Genre_1)
+
+# Workflows
+data_wf_mtry150 <- workflow() %>%
+  add_model(rf_spec %>% set_args(mtry = 150)) %>%
+  add_recipe(data_rec) 
+
+## Create workflows for min_n = 10, 25, and 50
+
+data_wf_mtry125 <- workflow() %>%
+  add_model(rf_spec %>% set_args(mtry = 125)) %>%
+  add_recipe(data_rec)
+
+data_wf_mtry75 <- workflow() %>%
+  add_model(rf_spec %>% set_args(mtry = 75)) %>%
+  add_recipe(data_rec)
+
+data_wf_mtry100 <- workflow() %>%
+  add_model(rf_spec %>% set_args(mtry = 100)) %>%
+  add_recipe(data_rec)
+```
+
+```{r}
+# Fit Models
+set.seed(123) # make sure to run this before each fit so that you have the same 1000 trees
+data_fit_mtry150 <- fit(data_wf_mtry150, data = imdb_clean_class)
+
+# Fit models for 10, 25, and 50
+set.seed(123) 
+data_fit_mtry125 <- fit(data_wf_mtry125, data = imdb_clean_class)
+
+set.seed(123)
+data_fit_mtry75 <- fit(data_wf_mtry75, data = imdb_clean_class)
+
+set.seed(123) 
+data_fit_mtry100 <- fit(data_wf_mtry100, data = imdb_clean_class)
+```
+
+```{r}
+# Custom Function to get OOB predictions, true observed outcomes and add a user-provided model label
+rf_OOB_output <- function(fit_model, model_label, truth){
+    tibble(
+          .pred_class = fit_model %>% extract_fit_engine() %>% pluck('predictions'), #OOB predictions
+          flop = truth,
+          label = model_label
+      )
+}
+
+rf_OOB_output(data_fit_mtry150,150, imdb_clean_class %>% pull(flop))
+```
+
+
+```{r}
+# Evaluate OOB Metrics
+
+data_rf_OOB_output <- bind_rows(
+    rf_OOB_output(data_fit_mtry150,150, imdb_clean_class %>% pull(flop)),
+    rf_OOB_output(data_fit_mtry125,125, imdb_clean_class %>% pull(flop)),
+    rf_OOB_output(data_fit_mtry75,75, imdb_clean_class %>% pull(flop)),
+    rf_OOB_output(data_fit_mtry100,100, imdb_clean_class %>% pull(flop))
+)
+
+
+data_rf_OOB_output %>% 
+    group_by(label) %>%
+    accuracy(truth = flop, estimate = .pred_class)
+```
+
+### Evaluating the Forest
+
+```{r}
+rf_OOB_output(data_fit_mtry125,125, imdb_clean_class %>% pull(flop)) %>%
+    conf_mat(truth = class, estimate= .pred_class)
+```
+
+### Variable Importance
+
+```{r}
+# Impurity
+
+model_output <-data_fit_mtry125 %>% 
+    extract_fit_engine() 
+
+model_output %>% 
+    vip(num_features = 10) + theme_classic() #based on impurity, 10 meaning the top 10
+
+model_output %>% vip::vi() %>% head()
+model_output %>% vip::vi() %>% tail()
+```
+
+```{r}
+# Permutation
+
+model_output2 <- data_wf_mtry125 %>% 
+  update_model(rf_spec %>% set_args(importance = "permutation")) %>% #based on permutation
+  fit(data = imdb_clean_class) %>% 
+    extract_fit_engine() 
+
+model_output2 %>% 
+    vip(num_features = 10) + theme_classic()
+
+
+model_output2 %>% vip::vi() %>% head()
+model_output2 %>% vip::vi() %>% tail()
+```
+
+# Logistic Regression
+
+```{r}
+set.seed(123)
+
+# Logistic Regression Model Spec
+logistic_spec <- logistic_reg() %>%
+    set_engine('glm') %>%
+    set_mode('classification')
+# Recipe
+logistic_rec <- recipe(flop ~ IMDB_Rating, No_of_Votes, gross,
+                   data = imdb_clean_class)
+# Workflow (Recipe + Model)
+log_wf <- workflow() %>%
+    add_recipe(logistic_rec) %>%
+    add_model(logistic_spec)
+# Fit Model
+log_fit <- fit(log_wf, data = imdb_clean_class)
+
+tidy(log_fit)
+```
+
+
+```{r}
+log_fit %>% tidy() %>%
+  mutate(OR = exp(estimate))
+```
+```{r}
+predict(log_fit, new_data = data.frame(IMDB_Rating = 5, No_of_Votes = 500000, gross = 18), type = "prob"
+)
+```
+
+
+```{r}
+predict(log_fit, new_data = data.frame(IMDB_Rating = 5, No_of_Votes = 500000, gross = 18), type = "class"
+)
+```
+

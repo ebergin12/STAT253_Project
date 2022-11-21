@@ -47,7 +47,7 @@ imdb_top_1000 <- read_csv("imdb_top_1000_updated.csv")
 ```{r}
 imdb_clean <- imdb_top_1000 %>%
   cSplit("Genre", sep = ",", direction = "wide") %>%
-  mutate(Gross = log(revenue))
+  mutate(Gross = log(revenue - budget))
 
 runtime_clean <- imdb_top_1000$Runtime %>%
   str_replace(" min", "") %>%
@@ -78,9 +78,9 @@ rf_spec <- rand_forest() %>%
   set_mode('classification') # change this for regression
 
 # Recipe
-data_rec <- recipe(flop ~ No_of_Votes, Runtime, IMDB_Rating, Meta_score, Genre, popularity, vote_average, vote_count,
+data_rec <- recipe(flop ~ No_of_Votes + Runtime + IMDB_Rating + Meta_score + Genre_1,
                    data = imdb_clean_class) %>%
-  step_naomit()
+  step_naomit(flop, No_of_Votes, Runtime, IMDB_Rating, Meta_score, Genre_1)
 
 # Workflows
 data_wf_mtry150 <- workflow() %>%
