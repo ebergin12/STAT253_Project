@@ -1,0 +1,88 @@
+---
+title: "Clustering Model"
+author: "Emily Bergin"
+date: '2022-11-28'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error=TRUE, message=FALSE, warning=FALSE)
+```
+
+
+# Library Statements
+
+```{r}
+library(dplyr)
+library(purrr)
+library(ggplot2)
+library(ISLR)
+library(readr)
+library(tidymodels)
+library(stringr)
+library(lubridate)
+```
+
+# Read in Data
+
+```{r}
+imdb_top_1000 <- read_csv("~/Desktop/Statistical Machine Learning/R Files/Final Project/imdb_top_1000_CLEAN.csv")
+```
+
+# Data Cleaning
+
+```{r}
+imdb_clean <- imdb_top_1000 %>%
+  cSplit("Genre", sep = ",", direction = "wide") %>%
+  mutate(Gross = log(Revenue-Budget)) %>%
+  select(-...15)
+
+runtime_clean <- imdb_top_1000$Runtime %>%
+  str_replace(" min", "") %>%
+  as.numeric()
+
+imdb_clean$Runtime <- runtime_clean
+
+imdb_clean <- imdb_clean %>%
+  filter(Gross != "-Inf") %>%
+  filter(!is.na(Gross)) %>%
+  filter(!is.na(Budget))
+```
+
+### K-Means Clustering
+
+```{r}
+# Select just the bill length and depth variables
+imdb_sub <- imdb_clean %>%
+    select(Budget, Gross)
+
+# Run k-means for k = centers = 3
+set.seed(253)
+kclust_k10 <- kmeans(scale(imdb_sub), centers = 10)
+
+# Display the cluter assignments
+kclust_k10$cluster
+
+# Add a variable (kclust_3) to the original dataset 
+# containing the cluster assignments
+imdb_clean <- imdb_clean %>%
+    mutate(kclust_10 = factor(kclust_k10$cluster))
+```
+
+```{r}
+# Visualize the cluster assignments on the original scatterplot
+imdb_clean %>%
+  ggplot(aes(x = Budget, y = Gross, color = kclust_10)) +
+    geom_point() + theme_classic()
+```
+
+## Interpreting the Clusters
+
+```{r}
+imdb_clean %>%
+    group_by(kclust_10) %>%
+    summarize(across(c(Gross, Budget), mean))
+```
+
+
+
