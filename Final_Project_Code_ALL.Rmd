@@ -53,7 +53,8 @@ runtime_clean <- imdb_top_1000$Runtime %>%
 imdb_clean$Runtime <- runtime_clean
 
 imdb_clean <- imdb_clean %>%
-  filter(Gross != "-Inf")
+  filter(Gross != "-Inf") %>%
+  drop_na(Gross, Budget)
 ```
 
 # Creation of CV Folds
@@ -433,11 +434,12 @@ In addition to our earlier discussion of societal impacts that our model may hav
 ```{r}
 imdb_clean_class <- imdb_clean %>%
   mutate(success_ratio = Revenue/Budget) %>%
-  mutate(flop = as.factor(ifelse(success_ratio > 1.5, 'FALSE', 'TRUE'))) %>%
-  filter(!is.na(flop)) %>%
-  filter(Gross != "NaN") %>%
-  filter(success_ratio != "Inf") %>%
-  filter(Budget > 10)
+  mutate(flop = as.factor(ifelse(success_ratio > 2, 'FALSE', 'TRUE'))) %>%
+  drop_na(flop, No_of_Votes,Runtime, IMDB_Rating,Meta_score,Genre_1)
+  # filter(!is.na(flop)) %>%
+  # filter(Gross != "NaN") %>%
+  # filter(success_ratio != "Inf") %>%
+  # filter(Budget > 10)
 ```
 
 # Bagging and Random Forests
@@ -446,8 +448,7 @@ imdb_clean_class <- imdb_clean %>%
 # Model Specification
 rf_spec <- rand_forest() %>%
   set_engine(engine = 'ranger') %>% 
-  set_args(mtry = 4, # size of random subset of variables; default is floor(sqrt(number of total predictors))
-           trees = 1000, # Number of trees
+  set_args(trees = 1000, # Number of trees
            min_n = NULL,
            probability = FALSE, # FALSE: get hard predictions (not needed for regression)
            importance = 'impurity') %>% # we'll come back to this at the end
@@ -459,39 +460,31 @@ data_rec <- recipe(flop ~ No_of_Votes + Runtime + IMDB_Rating + Meta_score + Gen
   step_naomit(flop, No_of_Votes, Runtime, IMDB_Rating, Meta_score, Genre_1)
 
 # Workflows
-data_wf_mtry150 <- workflow() %>%
-  add_model(rf_spec %>% set_args(mtry = 150)) %>%
+data_wf_mtry3 <- workflow() %>%
+  add_model(rf_spec %>% set_args(mtry = 3)) %>%
+  add_recipe(data_rec) 
+
+data_wf_mtry4 <- workflow() %>%
+  add_model(rf_spec %>% set_args(mtry = 4)) %>%
   add_recipe(data_rec) 
 
 ## Create workflows for min_n = 10, 25, and 50
 
-data_wf_mtry125 <- workflow() %>%
-  add_model(rf_spec %>% set_args(mtry = 125)) %>%
-  add_recipe(data_rec)
-
-data_wf_mtry75 <- workflow() %>%
-  add_model(rf_spec %>% set_args(mtry = 75)) %>%
-  add_recipe(data_rec)
-
-data_wf_mtry100 <- workflow() %>%
-  add_model(rf_spec %>% set_args(mtry = 100)) %>%
+data_wf_mtry5 <- workflow() %>%
+  add_model(rf_spec %>% set_args(mtry = 5)) %>%
   add_recipe(data_rec)
 ```
 
 ```{r}
 # Fit Models
 set.seed(123) # make sure to run this before each fit so that you have the same 1000 trees
-data_fit_mtry150 <- fit(data_wf_mtry150, data = imdb_clean_class)
+data_fit_mtry3 <- fit(data_wf_mtry3, data = imdb_clean_class)
 
-# Fit models for 10, 25, and 50
 set.seed(123) 
-data_fit_mtry125 <- fit(data_wf_mtry125, data = imdb_clean_class)
+data_fit_mtry4 <- fit(data_wf_mtry4, data = imdb_clean_class)
 
 set.seed(123)
-data_fit_mtry75 <- fit(data_wf_mtry75, data = imdb_clean_class)
-
-set.seed(123) 
-data_fit_mtry100 <- fit(data_wf_mtry100, data = imdb_clean_class)
+data_fit_mtry5 <- fit(data_wf_mtry5, data = imdb_clean_class)
 ```
 
 ```{r}
@@ -503,8 +496,6 @@ rf_OOB_output <- function(fit_model, model_label, truth){
           label = model_label
       )
 }
-
-rf_OOB_output(data_fit_mtry150,150, imdb_clean_class %>% pull(flop))
 ```
 
 
@@ -512,10 +503,9 @@ rf_OOB_output(data_fit_mtry150,150, imdb_clean_class %>% pull(flop))
 # Evaluate OOB Metrics
 
 data_rf_OOB_output <- bind_rows(
-    rf_OOB_output(data_fit_mtry150,150, imdb_clean_class %>% pull(flop)),
-    rf_OOB_output(data_fit_mtry125,125, imdb_clean_class %>% pull(flop)),
-    rf_OOB_output(data_fit_mtry75,75, imdb_clean_class %>% pull(flop)),
-    rf_OOB_output(data_fit_mtry100,100, imdb_clean_class %>% pull(flop))
+    rf_OOB_output(data_fit_mtry3,3, imdb_clean_class %>% pull(flop)),
+    rf_OOB_output(data_fit_mtry4,4, imdb_clean_class %>% pull(flop)),
+    rf_OOB_output(data_fit_mtry5,5, imdb_clean_class %>% pull(flop))
 )
 
 
@@ -527,8 +517,8 @@ data_rf_OOB_output %>%
 ### Evaluating the Forest
 
 ```{r}
-rf_OOB_output(data_fit_mtry125,125, imdb_clean_class %>% pull(flop)) %>%
-    conf_mat(truth = class, estimate= .pred_class)
+rf_OOB_output(data_fit_mtry4,4, imdb_clean_class %>% pull(flop)) %>%
+    conf_mat(truth = flop, estimate= .pred_class)
 ```
 
 ### Variable Importance
@@ -536,7 +526,7 @@ rf_OOB_output(data_fit_mtry125,125, imdb_clean_class %>% pull(flop)) %>%
 ```{r}
 # Impurity
 
-model_output <-data_fit_mtry125 %>% 
+model_output <-data_fit_mtry4 %>% 
     extract_fit_engine() 
 
 model_output %>% 
@@ -549,7 +539,7 @@ model_output %>% vip::vi() %>% tail()
 ```{r}
 # Permutation
 
-model_output2 <- data_wf_mtry125 %>% 
+model_output2 <- data_wf_mtry4 %>% 
   update_model(rf_spec %>% set_args(importance = "permutation")) %>% #based on permutation
   fit(data = imdb_clean_class) %>% 
     extract_fit_engine() 
@@ -571,13 +561,16 @@ set.seed(123)
 logistic_spec <- logistic_reg() %>%
     set_engine('glm') %>%
     set_mode('classification')
+
 # Recipe
-logistic_rec <- recipe(flop ~ IMDB_Rating, No_of_Votes, gross,
+logistic_rec <- recipe(flop ~ No_of_Votes + Runtime + IMDB_Rating + Genre_1,
                    data = imdb_clean_class)
+
 # Workflow (Recipe + Model)
 log_wf <- workflow() %>%
     add_recipe(logistic_rec) %>%
     add_model(logistic_spec)
+
 # Fit Model
 log_fit <- fit(log_wf, data = imdb_clean_class)
 
@@ -589,14 +582,17 @@ tidy(log_fit)
 log_fit %>% tidy() %>%
   mutate(OR = exp(estimate))
 ```
+
 ```{r}
-predict(log_fit, new_data = data.frame(IMDB_Rating = 5, No_of_Votes = 500000, gross = 18), type = "prob"
+predict(log_fit, new_data = data.frame(No_of_Votes = 10000, Runtime = 112, IMDB_Rating = 9.8,
+                                        Genre_1 = "Drama"), type = "prob"
 )
 ```
 
 
 ```{r}
-predict(log_fit, new_data = data.frame(IMDB_Rating = 5, No_of_Votes = 500000, gross = 18), type = "class"
+predict(log_fit, new_data = data.frame(No_of_Votes = 10000, Runtime = 112, IMDB_Rating = 9.8,
+                                        Genre_1 = "Drama"), type = "class"
 )
 ```
 
