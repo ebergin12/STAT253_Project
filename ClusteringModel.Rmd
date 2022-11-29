@@ -21,6 +21,7 @@ library(readr)
 library(tidymodels)
 library(stringr)
 library(lubridate)
+library(splitstackshape)
 ```
 
 # Read in Data
@@ -76,12 +77,106 @@ imdb_clean %>%
     geom_point() + theme_classic()
 ```
 
+```{r}
+# Data-specific function to cluster and calculate total within-cluster SS
+imdb_cluster_ss <- function(k){
+    # Perform clustering
+    kclust <- kmeans(scale(imdb_sub), centers = k)
+
+    # Return the total within-cluster sum of squares
+    return(kclust$tot.withinss)
+}
+
+tibble(
+    k = 1:15,
+    tot_wc_ss = purrr::map_dbl(1:15, imdb_cluster_ss)
+) %>% 
+    ggplot(aes(x = k, y = tot_wc_ss)) +
+    geom_point() + 
+    labs(x = "Number of clusters",y = 'Total within-cluster sum of squares') + 
+    theme_classic()
+```
+
+```{r}
+kclust_k8 <- kmeans(scale(imdb_sub), centers = 8)
+
+# Display the cluter assignments
+kclust_k8$cluster
+
+# Add a variable (kclust_3) to the original dataset 
+# containing the cluster assignments
+imdb_clean <- imdb_clean %>%
+    mutate(kclust_8 = factor(kclust_k8$cluster))
+```
+
+```{r}
+# Visualize the cluster assignments on the original scatterplot
+imdb_clean %>%
+  ggplot(aes(x = Budget, y = Gross, color = kclust_8)) +
+    geom_point() + theme_classic()
+```
+
+*Pick either k = 8 or k = 10 --> there are 7 genres with larger n and 13 total genres. Film noir is fancy way of saying crime drama (ex. Knives Out). One thing to note is a significant number of movies have Genre_2 listed as Family Mystery and Horror (and many have one of the main genres listed as genre 2 as well). What is a good way to summarize both Genre 1 and 2?*
+
+```{r}
+imdb_clean %>%
+  count(Genre_1)
+
+imdb_clean %>%
+  count(Genre_2)
+```
+
 ## Interpreting the Clusters
 
 ```{r}
 imdb_clean %>%
-    group_by(kclust_10) %>%
-    summarize(across(c(Gross, Budget), mean))
+  group_by(kclust_10) %>%
+  summarize(across(c(Gross, Budget), mean))
+
+imdb_clean %>%
+  group_by(kclust_8) %>%
+  count(Genre_1)
+
+imdb_clean %>%
+  group_by(kclust_8) %>%
+  count(Genre_2)
+
+imdb_clean%>%
+  count(kclust_8)
+```
+
+
+### Hierarchial Clustering
+
+```{r}
+# Random subsample of 50 penguins
+set.seed(253)
+imdb_hc <- imdb_clean %>%
+    slice_sample(n = 25)
+
+# Select the variables to be used in clustering
+imdb_hc_sub <- imdb_hc %>%
+    select(Gross, Budget)
+
+# Summary statistics for the variables
+summary(imdb_hc_sub)
+
+# Compute a distance matrix on the scaled data
+dist_mat_scaled <- dist(scale(imdb_hc_sub))
+```
+
+```{r}
+imdb_hc_avg <- hclust(dist_mat_scaled, method = "average")
+
+# Plot dendrogram
+plot(imdb_hc_avg)
+```
+
+```{r}
+
+plot(imdb_hc_avg, labels = imdb_hc$Genre_1)
+
+plot(imdb_hc_avg, labels = paste(imdb_hc$Genre_1, imdb_hc$Genre_2))
 ```
 
 
