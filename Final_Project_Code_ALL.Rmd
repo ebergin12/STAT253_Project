@@ -675,11 +675,11 @@ threshold_output %>%
 log_metrics <- metric_set(accuracy,sens,yardstick::spec)
 
 final_output %>%
-    mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .88)) %>%
+    mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .12)) %>%
     log_metrics(truth = flop, estimate = .pred_class, event_level = 'second')
 
 final_output %>%
-  mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .88)) %>%
+  mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .12)) %>%
   conf_mat(truth = flop, estimate = .pred_class)
 ```
 
@@ -692,7 +692,7 @@ predict(log_fit, new_data = data.frame(No_of_Votes = 10000, Runtime = 112, IMDB_
 
 ```{r}
 predict(log_fit, new_data = data.frame(No_of_Votes = 10000, Runtime = 112, IMDB_Rating = 9.8,
-                                        Genre_1 = "Drama"), type = "class"
+                                        Genre_1 = "Drama"), type = "class", threshold = .12
 )
 ```
 
