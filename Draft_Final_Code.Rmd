@@ -162,9 +162,100 @@ tune_res <- tune_grid(
 # Visualize Model Evaluation Metrics from Tuning
 
 autoplot(tune_res) + theme_classic()
+
+# Collect CV Metrics and Select Best Model
+
+# Summarize Model Evaluation Metrics (CV)
+lasso_mod <- collect_metrics(tune_res) %>%
+  filter(.metric == 'rmse') %>%
+  select(penalty, rmse = mean) 
+
+best_penalty <- select_best(tune_res, metric = 'rmse') # choose penalty value
+
+lasso_mod
 ```
 
+### Fit Final Model
 
+```{r}
+# Fit Final Model
+
+final_wf <- finalize_workflow(lasso_wf_tune, best_penalty) # incorporates penalty value to workflow
+
+final_fit <- fit(final_wf, data = imdb_clean)
+
+lasso_fit <- fit_resamples(final_wf, resamples = data_cv10, metrics = metric_set(rmse, rsq, mae))
+
+tidy(final_fit)
+
+# Final ("best") model predictors and coefficients
+
+final_fit %>% tidy() %>% filter(estimate != 0)
+```
+
+### Visualize Residuals
+
+```{r}
+lasso_mod_out <- final_fit %>%
+    predict(new_data = imdb_clean) %>%
+    bind_cols(imdb_clean) %>%
+    mutate(resid = Gross - .pred)
+
+ggplot(lasso_mod_out, aes(x = .pred, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out, aes(x = Runtime, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out, aes(x = IMDB_Rating, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out, aes(x = No_of_Votes, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+```
+
+## GAM Using Splines
+
+```{r}
+# Build the GAM
+
+gam_spec <- 
+  gen_additive_mod() %>%
+  set_engine(engine = 'mgcv') %>%
+  set_mode('regression') 
+
+gam_mod <- fit(gam_spec,
+    Gross ~ s(Runtime) + IMDB_Rating + s(Meta_score) + s(No_of_Votes) + Genre_1,
+    data = imdb_clean 
+)
+
+```
+
+````{r}
+# Diagnostics: Check to see if the number of knots is large enough (if p-value is low, increase number of knots)
+
+gam_mod %>% pluck('fit') %>% mgcv::gam.check()
+
+gam_mod %>% pluck('fit') %>% summary() 
+```
+
+```{r}
+# Visualize: Look at the estimated non-linear functions
+
+gam_mod %>% pluck('fit') %>% plot()
+```
 
 
 
