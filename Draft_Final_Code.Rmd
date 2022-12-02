@@ -1,0 +1,174 @@
+---
+title: "Final Project Code ALL"
+author: "Emily, Julian, Jacob, and Aristo"
+date: '2022-11-20'
+output: 
+  html_document:
+    df_print: paged
+    toc: true
+    code_download: true
+    theme: paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error=TRUE, message=FALSE, warning=FALSE)
+```
+
+# Library Statements 
+
+```{r}
+library(ISLR)
+library(dplyr)
+library(readr)
+library(broom)
+library(ggplot2)
+library(tidymodels) 
+library(stringr)
+library(splitstackshape)
+library(lubridate)
+library(rpart.plot)
+library(cluster)
+library(forcats)
+tidymodels_prefer()
+library(probably) #install.packages('probably')
+library(vip)
+```
+
+# Dataset
+
+```{r}
+imdb_top_1000 <- read_csv("~/Desktop/Statistical Machine Learning/R Files/Final Project/imdb_top_1000_CLEAN.csv")
+```
+
+## Data Cleaning
+
+```{r}
+imdb_clean <- imdb_top_1000 %>%
+  cSplit("Genre", sep = ",", direction = "wide") %>%
+  mutate(Gross = log(Revenue-Budget)) %>%
+  select(-...15)
+
+runtime_clean <- imdb_top_1000$Runtime %>%
+  str_replace(" min", "") %>%
+  as.numeric()
+
+imdb_clean$Runtime <- runtime_clean
+
+imdb_clean <- imdb_clean %>%
+  filter(Gross != "-Inf") %>%
+  drop_na(Gross, Budget)
+```
+
+## Data
+
+```{r}
+head(imdb_clean)
+```
+
+# Regression Models
+
+## Linear Regression Model
+
+### Creation of CV Folds
+
+```{r}
+data_cv10 <- vfold_cv(imdb_clean, v = 10)
+```
+
+### Model Spec, Recipes, and Workflows for Linear Regression Model
+
+```{r}
+# Model Spec
+
+lm_spec <-
+    linear_reg() %>% 
+    set_engine(engine = 'lm') %>% 
+    set_mode('regression')
+
+# Recipe
+
+full_lm_rec <- recipe(Gross ~ Runtime + IMDB_Rating + Meta_score + 
+                   No_of_Votes + Genre_1, data = imdb_clean) %>%
+    step_nzv(all_predictors()) %>% 
+    step_normalize(all_numeric_predictors()) %>% 
+    step_dummy(all_nominal_predictors()) %>%
+    step_naomit(Gross, Runtime, IMDB_Rating, Meta_score, No_of_Votes)
+
+# Workflow
+
+full_lm_wf <- workflow() %>%
+    add_recipe(full_lm_rec) %>%
+    add_model(lm_spec)
+```
+
+### Fit Preliminary Model
+
+```{r}
+full_lm_model <- fit(full_lm_wf, data = imdb_clean) 
+
+full_lm_model %>% tidy()
+```
+
+### Obtain Evaluation Metrics for Preliminary Model
+
+```{r}
+full_lm_modelcv <- fit_resamples(full_lm_wf, resamples = data_cv10, metrics = metric_set(rmse, rsq, mae))
+
+full_lm_modelcv %>%
+  collect_metrics()
+```
+
+### Perform LASSO for Subset Selection
+
+```{r}
+# Lasso Model Spec with tune
+
+lm_lasso_spec_tune <- 
+  linear_reg() %>%
+  set_args(mixture = 1, penalty = tune()) %>%   # mixture = 1 indicates Lasso
+  set_engine(engine = 'glmnet') %>%             
+  set_mode('regression') 
+
+# Recipe
+
+data_rec_lasso <- recipe(Gross ~ Runtime + IMDB_Rating + Meta_score + 
+                   No_of_Votes + Genre_1, data = imdb_clean) %>%
+    step_nzv(all_predictors()) %>%                # removes variables with the same value (don't want duplicates)
+    step_novel(all_nominal_predictors()) %>%      # important if you have rare categorical variables 
+    step_normalize(all_numeric_predictors()) %>%  # standardization important step for LASSO
+    step_dummy(all_nominal_predictors()) %>%      # creates indicator variables for categorical variables
+    step_naomit(Gross, Runtime, IMDB_Rating,      # omit any NA values
+                Meta_score, No_of_Votes)                            
+
+# Workflow
+
+lasso_wf_tune <- workflow() %>% 
+  add_recipe(data_rec_lasso) %>%
+  add_model(lm_lasso_spec_tune) 
+
+# Tune Model (trying a variety of values of Lambda penalty)
+
+penalty_grid <- grid_regular(
+  penalty(range = c(-3, 1)),
+  levels = 30)
+
+tune_res <- tune_grid(
+  lasso_wf_tune, 
+  resamples = data_cv10, 
+  metrics = metric_set(rmse, mae),
+  grid = penalty_grid 
+)
+
+# Visualize Model Evaluation Metrics from Tuning
+
+autoplot(tune_res) + theme_classic()
+```
+
+
+
+
+
+
+
+
+
