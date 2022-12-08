@@ -67,7 +67,7 @@ head(imdb_clean)
 
 # Regression Models
 
-## Linear Regression Model
+## Ordinary Linear Regression Model
 
 ### Creation of CV Folds
 
@@ -101,7 +101,7 @@ full_lm_wf <- workflow() %>%
     add_model(lm_spec)
 ```
 
-### Fit Preliminary Model
+### Fit Full Model
 
 ```{r}
 full_lm_model <- fit(full_lm_wf, data = imdb_clean) 
@@ -109,7 +109,7 @@ full_lm_model <- fit(full_lm_wf, data = imdb_clean)
 full_lm_model %>% tidy()
 ```
 
-### Obtain Evaluation Metrics for Preliminary Model
+### Obtain Evaluation Metrics for Full Model
 
 ```{r}
 full_lm_modelcv <- fit_resamples(full_lm_wf, resamples = data_cv10, metrics = metric_set(rmse, rsq, mae))
@@ -118,7 +118,7 @@ full_lm_modelcv %>%
   collect_metrics()
 ```
 
-### Perform LASSO for Subset Selection
+## Perform LASSO for Subset Selection
 
 ```{r}
 # Lasso Model Spec with tune
@@ -170,12 +170,13 @@ lasso_mod <- collect_metrics(tune_res) %>%
   filter(.metric == 'rmse') %>%
   select(penalty, rmse = mean) 
 
-best_penalty <- select_best(tune_res, metric = 'rmse') # choose penalty value
+# Choose penalty value
+best_penalty <- select_best(tune_res, metric = 'rmse')
 
 lasso_mod
 ```
 
-### Fit Final Model
+### Fit Final LASSO Model
 
 ```{r}
 # Fit Final Model
@@ -193,7 +194,14 @@ tidy(final_fit)
 final_fit %>% tidy() %>% filter(estimate != 0)
 ```
 
-### Visualize Residuals
+### Obtain Evaluation Metrics for Full Model
+
+```{r}
+lasso_fit %>%
+  collect_metrics()
+```
+
+### Visualize Residuals for LASSO Model
 
 ```{r}
 lasso_mod_out <- final_fit %>%
@@ -226,7 +234,9 @@ ggplot(lasso_mod_out, aes(x = No_of_Votes, y = resid)) +
     theme_classic()
 ```
 
-## GAM Using Splines
+## GAM with Splines (TidyModels)
+
+### Build the GAM
 
 ```{r}
 # Build the GAM
@@ -236,28 +246,53 @@ gam_spec <-
   set_engine(engine = 'mgcv') %>%
   set_mode('regression') 
 
-gam_mod <- fit(gam_spec,
-    Gross ~ s(Runtime) + IMDB_Rating + s(Meta_score) + s(No_of_Votes) + Genre_1,
+gam_mod1 <- fit(gam_spec,
+    Gross ~ s(Runtime) + s(IMDB_Rating) + Meta_score + s(No_of_Votes) + Genre_1,
     data = imdb_clean 
 )
 
 ```
 
+### Run Diagnostics
+
 ````{r}
 # Diagnostics: Check to see if the number of knots is large enough (if p-value is low, increase number of knots)
 
-gam_mod %>% pluck('fit') %>% mgcv::gam.check()
-
-gam_mod %>% pluck('fit') %>% summary() 
+gam_mod1 %>% pluck('fit') %>% mgcv::gam.check()
 ```
+
+```{r}
+# Diagnostics: Check to see if the number of knots is large enough
+
+gam_mod1 %>% pluck('fit') %>% summary() 
+```
+
+### Visualization for Non-Linear Functions
 
 ```{r}
 # Visualize: Look at the estimated non-linear functions
 
-gam_mod %>% pluck('fit') %>% plot()
+gam_mod1 %>% pluck('fit') %>% plot()
 ```
 
+### Evaluation Metrics
 
+```{r}
+gam1_output <- gam_mod1%>% 
+    predict(new_data = imdb_clean) %>%
+    bind_cols(imdb_clean) %>%
+    mutate(resid = Gross - .pred)
+
+gam1_output %>%
+    rmse(truth = Gross, estimate = .pred)
+
+gam1_output %>%
+    rsq(truth = Gross, estimate = .pred)
+```
+
+## GAM with Splines (Recipe)
+
+### Build the GAM
 
 ```{r}
 spline_rec <- recipe(Gross ~ Runtime + IMDB_Rating + Meta_score + 
@@ -267,35 +302,41 @@ spline_rec <- recipe(Gross ~ Runtime + IMDB_Rating + Meta_score +
     step_dummy(all_nominal_predictors()) %>%
     step_naomit(Gross) %>%
     step_ns(Runtime, deg_free = 2) %>%
-    step_ns(No_of_Votes, deg_free = 6)
+    step_ns(No_of_Votes, deg_free = 6) %>%
+    step_ns(IMDB_Rating, deg_free = 2)
 
 
 spline_rec %>% prep(imdb_clean) %>% juice()
 ```
 
-
 ```{r}
-# Use the edf (round to integer) from above to create a recipe by adding step_ns() for the variables you want model with a non-linear relationship and do CV. Compare this model to one without any splines.
+# Build the GAM
 
 lm_spec_gam <-
   linear_reg() %>%
   set_engine(engine = 'lm') %>%
   set_mode('regression')
 
-
 spline_wf <- workflow() %>%
     add_model(lm_spec) %>%
     add_recipe(spline_rec)
 
-cv_output <- fit_resamples( 
+cv_output_spline2 <- fit_resamples( 
   spline_wf, # workflow
   resamples = data_cv10, # cv folds
   metrics = metric_set(mae,rmse,rsq)
 )
 
-cv_output %>% collect_metrics()
+```
+
+### Evaluation Metrics
+
+```{r}
+cv_output_spline2 %>% collect_metrics()
 
 ```
+
+### idk what this is for
 
 ```{r}
 new_mod <- spline_wf %>%
@@ -311,16 +352,16 @@ new_mod %>%
 new_modcv <- fit_resamples(spline_wf, resamples = data_cv10, metrics = metric_set(mae, rmse, rsq))
 ```
 
+## GAM with Splines and LASSO
 
-
-# Variable Importance for GAM
+### Build and Tune Model
 
 ```{r}
 # Lasso Model Spec with tune
 gam_lasso_spec_tune <- 
   linear_reg() %>%
   set_args(mixture = 1, penalty = tune()) %>% ## mixture = 1 indicates Lasso
-  set_engine(engine = 'glmnet') %>% #note we are using a different engine
+  set_engine(engine = 'glmnet') %>% 
   set_mode('regression') 
 
 # Recipe with standardization (!) --> just include all these always
@@ -353,7 +394,7 @@ tune_res1 <- tune_grid( # new function for tuning parameters
 autoplot(tune_res1) + theme_classic()
 ```
 
-# Collect CV Metrics and Select Best Model
+### Collect CV Metrics and Select Best Model
 
 ```{r}
 
@@ -365,62 +406,88 @@ collect_metrics(tune_res) %>%
 best_penalty1 <- select_best(tune_res1, metric = 'rmse') # choose penalty value based on lowest mae or rmse
 ```
 
-# Fit Final Model
+### Fit Final GAM LASSO Model
 
 ```{r}
-
 # Fit Final Model
-final_wf1 <- finalize_workflow(lasso_wf_tune1, best_penalty) # incorporates penalty value to workflow
 
-final_fit1 <- fit(final_wf1, data = imdb_clean)
+final_wf_gam_lasso <- finalize_workflow(lasso_wf_tune1, best_penalty) # incorporates penalty value to workflow
 
-tidy(final_fit1)
+final_fit_gam_lasso <- fit(final_wf_gam_lasso, data = imdb_clean)
+
+tidy(final_fit_gam_lasso)
 ```
 
 ```{r}
 # Final ("best") model predictors and coefficients
 
-final_fit1 %>% tidy() %>% filter(estimate != 0)
+final_fit_gam_lasso %>% tidy() %>% filter(estimate != 0)
 ```
 
-# Visualize Residuals
+### Evaluation Metrics
+
+```{r}
+gam_lasso_output <- fit_resamples( 
+  final_wf_gam_lasso, # workflow
+  resamples = data_cv10, # cv folds
+  metrics = metric_set(mae,rmse,rsq)
+)
+
+gam_lasso_output %>% collect_metrics()
+```
+
+## Compare GAMs
+
+```{r}
+gam1_output %>%
+    rmse(truth = Gross, estimate = .pred)
+
+cv_output_spline2 %>% collect_metrics()
+
+gam_lasso_output %>% collect_metrics()
+```
+
+The GAM created using TidyModels performs better than the recipe and LASSO GAMs.
+
+### Visualize Residuals for Final GAM
 
 ```{r}
 
 # Visualize Residuals
-lasso_mod_out1 <- new_mod %>%
+gam1_output <- new_mod %>%
     predict(new_data = imdb_clean) %>%
     bind_cols(imdb_clean) %>%
     mutate(resid = Gross - .pred)
 
 
-ggplot(lasso_mod_out1, aes(x = .pred, y = resid)) +
+ggplot(gam1_output, aes(x = .pred, y = resid)) +
     geom_point() +
     geom_smooth() +
     geom_hline(yintercept = 0, color = "red") + 
     theme_classic()
 
-ggplot(lasso_mod_out1, aes(x = Runtime, y = resid)) +
+ggplot(gam1_output, aes(x = Runtime, y = resid)) +
     geom_point() +
     geom_smooth() +
     geom_hline(yintercept = 0, color = "red") + 
     theme_classic()
 
-ggplot(lasso_mod_out1, aes(x = IMDB_Rating, y = resid)) +
+ggplot(gam1_output, aes(x = IMDB_Rating, y = resid)) +
     geom_point() +
     geom_smooth() +
     geom_hline(yintercept = 0, color = "red") + 
     theme_classic()
 
-ggplot(lasso_mod_out1, aes(x = No_of_Votes, y = resid)) +
+ggplot(gam1_output, aes(x = No_of_Votes, y = resid)) +
     geom_point() +
     geom_smooth() +
     geom_hline(yintercept = 0, color = "red") + 
     theme_classic()
 ```
 
+There does not appear to be any significant bias after analyzing the residuals.
 
-# Comparing Model Performance
+## Compare All Linear Regression Model Performance
 
 ```{r}
 full_lm_modelcv %>% collect_metrics() #OLS
@@ -431,8 +498,12 @@ lasso_fit %>% collect_metrics() #LASSO
 ```
 
 ```{r}
-new_modcv %>% collect_metrics() #GAM
+gam1_output %>%
+    rmse(truth = Gross, estimate = .pred) #GAM
 ```
+
+The GAM with Splines obtained using TidyModels performs the best with the lowest RMSE value (1.3 compared to 1.4 for the others).
+
 
 # Bagging and Random Forests
 
@@ -829,15 +900,21 @@ imdb_hc <- imdb_clean %>%
 imdb_hc_sub <- imdb_hc %>%
     select(Gross, Budget)
 
+imdb_hc_full <- imdb_clean %>%
+  select(Gross, Budget)
+
 # Summary statistics for the variables
 summary(imdb_hc_sub)
 
 # Compute a distance matrix on the scaled data
 dist_mat_scaled <- dist(scale(imdb_hc_sub))
+
+dist_mat_full <- dist(scale(imdb_hc_full))
 ```
 
 ```{r}
 imdb_hc_avg <- hclust(dist_mat_scaled, method = "average")
+imdb_full_avg <- hclust(dist_mat_full, method = "average")
 
 # Plot dendrogram
 plot(imdb_hc_avg)
@@ -853,11 +930,15 @@ plot(imdb_hc_avg, labels = paste(imdb_hc$Genre_1, imdb_hc$Genre_2))
 ```{r}
 imdb_clean <- imdb_clean %>%
     mutate(
-        hclust_height = factor(cutree(imdb_hc_avg, h = 1.25)), # Cut at height (h) 3
-        hclust_num = factor(cutree(imdb_hc_avg, k = 5)) # Cut into 6 clusters (k)
+        hclust_num = factor(cutree(imdb_full_avg, k = 3)) # Cut into 6 clusters (k)
     )
 
-plot(imdb_hc_avg, labels = imdb_clean$hclust_height)
 ```
 
+```{r}
+ggplot(imdb_clean, aes(x = hclust_num, fill = Genre_1)) +
+    geom_bar(position = "fill") +
+    labs(x = "Cluster") + 
+    theme_classic()
+```
 
