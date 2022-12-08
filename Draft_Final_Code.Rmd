@@ -247,7 +247,7 @@ gam_spec <-
   set_mode('regression') 
 
 gam_mod1 <- fit(gam_spec,
-    Gross ~ s(Runtime) + s(IMDB_Rating) + Meta_score + s(No_of_Votes) + Genre_1,
+    Gross ~ s(Runtime, k = 20) + s(IMDB_Rating) + Meta_score + s(No_of_Votes) + Genre_1,
     data = imdb_clean 
 )
 
@@ -301,9 +301,9 @@ spline_rec <- recipe(Gross ~ Runtime + IMDB_Rating + Meta_score +
     step_normalize(all_numeric_predictors()) %>% 
     step_dummy(all_nominal_predictors()) %>%
     step_naomit(Gross) %>%
-    step_ns(Runtime, deg_free = 2) %>%
-    step_ns(No_of_Votes, deg_free = 6) %>%
-    step_ns(IMDB_Rating, deg_free = 2)
+    step_ns(Runtime, deg_free = 19) %>%
+    step_ns(No_of_Votes, deg_free = 9) %>%
+    step_ns(IMDB_Rating, deg_free = 9)
 
 
 spline_rec %>% prep(imdb_clean) %>% juice()
@@ -333,107 +333,6 @@ cv_output_spline2 <- fit_resamples(
 
 ```{r}
 cv_output_spline2 %>% collect_metrics()
-
-```
-
-### idk what this is for
-
-```{r}
-new_mod <- spline_wf %>%
-  fit(data = imdb_clean)
-
-new_mod %>%
-  tidy() 
-
-new_mod %>% 
-  tidy() %>% 
-  arrange(desc(abs(statistic)))
-
-new_modcv <- fit_resamples(spline_wf, resamples = data_cv10, metrics = metric_set(mae, rmse, rsq))
-```
-
-## GAM with Splines and LASSO
-
-### Build and Tune Model
-
-```{r}
-# Lasso Model Spec with tune
-gam_lasso_spec_tune <- 
-  linear_reg() %>%
-  set_args(mixture = 1, penalty = tune()) %>% ## mixture = 1 indicates Lasso
-  set_engine(engine = 'glmnet') %>% 
-  set_mode('regression') 
-
-# Recipe with standardization (!) --> just include all these always
-data_rec <- recipe(Gross ~ Runtime + IMDB_Rating + Meta_score + 
-                   No_of_Votes + Genre_1, data = imdb_clean) %>%
-    step_nzv(all_predictors()) %>% # removes variables with the same value (so duplicates don't mess up model)
-    step_novel(all_nominal_predictors()) %>% # important if you have rare categorical variables 
-    step_normalize(all_numeric_predictors()) %>%  # super important standardization step for LASSO
-    step_dummy(all_nominal_predictors()) %>%  # creates indicator variables for categorical variables
-    step_naomit(Gross)
-
-# Workflow (Recipe + Model)
-lasso_wf_tune1 <- workflow() %>% 
-  add_recipe(data_rec) %>%
-  add_model(gam_lasso_spec_tune) 
-
-# Tune Model (trying a variety of values of Lambda penalty)
-penalty_grid <- grid_regular(
-  penalty(range = c(-3, 1)),
-  levels = 30)
-
-tune_res1 <- tune_grid( # new function for tuning parameters
-  lasso_wf_tune1, # workflow
-  resamples = data_cv10, # cv folds
-  metrics = metric_set(rmse, mae),
-  grid = penalty_grid # penalty grid defined above
-)
-
-# Visualize Model Evaluation Metrics from Tuning
-autoplot(tune_res1) + theme_classic()
-```
-
-### Collect CV Metrics and Select Best Model
-
-```{r}
-
-# Summarize Model Evaluation Metrics (CV)
-collect_metrics(tune_res) %>%
-  filter(.metric == 'rmse') %>% # or choose mae
-  select(penalty, rmse = mean) 
-
-best_penalty1 <- select_best(tune_res1, metric = 'rmse') # choose penalty value based on lowest mae or rmse
-```
-
-### Fit Final GAM LASSO Model
-
-```{r}
-# Fit Final Model
-
-final_wf_gam_lasso <- finalize_workflow(lasso_wf_tune1, best_penalty) # incorporates penalty value to workflow
-
-final_fit_gam_lasso <- fit(final_wf_gam_lasso, data = imdb_clean)
-
-tidy(final_fit_gam_lasso)
-```
-
-```{r}
-# Final ("best") model predictors and coefficients
-
-final_fit_gam_lasso %>% tidy() %>% filter(estimate != 0)
-```
-
-### Evaluation Metrics
-
-```{r}
-gam_lasso_output <- fit_resamples( 
-  final_wf_gam_lasso, # workflow
-  resamples = data_cv10, # cv folds
-  metrics = metric_set(mae,rmse,rsq)
-)
-
-gam_lasso_output %>% collect_metrics()
 ```
 
 ## Compare GAMs
@@ -443,11 +342,9 @@ gam1_output %>%
     rmse(truth = Gross, estimate = .pred)
 
 cv_output_spline2 %>% collect_metrics()
-
-gam_lasso_output %>% collect_metrics()
 ```
 
-The GAM created using TidyModels performs better than the recipe and LASSO GAMs.
+The GAM created using TidyModels performs better than the recipe and GAMs. Likely has to do with the degrees of freedom of the splines.
 
 ### Visualize Residuals for Final GAM
 
@@ -563,7 +460,7 @@ set.seed(123)
 data_fit_mtry5 <- fit(data_wf_mtry5, data = imdb_clean_class)
 ```
 
-### Obtain OOB Predictions and Evaluation Metrics
+### Obtain OOB Predictions and Evaluation Metrics to Choose mtry Value
 
 ```{r}
 # Custom Function to get OOB predictions, true observed outcomes and add a user-provided model label
@@ -661,6 +558,8 @@ ggplot(imdb_clean_class, aes(x = flop, y = Meta_score)) +
 
 ## Logistic Regression
 
+### Model Spec, Recipe, and Workflow
+
 ```{r}
 set.seed(123)
 
@@ -677,6 +576,11 @@ logistic_rec <- recipe(flop ~ No_of_Votes + Runtime + IMDB_Rating + Genre_1,
 log_wf <- workflow() %>%
     add_recipe(logistic_rec) %>%
     add_model(logistic_spec)
+```
+
+### Fit Model
+
+```{r}
 
 # Fit Model
 log_fit <- fit(log_wf, data = imdb_clean_class)
@@ -684,13 +588,13 @@ log_fit <- fit(log_wf, data = imdb_clean_class)
 tidy(log_fit)
 ```
 
+### Adds Variable for Odds Ratio
 
 ```{r}
 log_fit %>% tidy() %>%
   mutate(OR = exp(estimate))
 ```
 
-*Ask Bryan about relevel factor... do we need it?*
 
 ```{r}
 # Creation of CV Folds
@@ -698,29 +602,28 @@ data_cv10_class <- vfold_cv(imdb_clean_class, v = 10)
 ```
 
 
-# Recipes and Workflows
+# Cross Validation and Evaluation Metrics
 
 ```{r}
-full_log_wf <- workflow() %>%
-  add_recipe(logistic_rec) %>%
-  add_model(logistic_spec)
-    
-log_model <- fit(full_log_wf, data = imdb_clean_class) 
-
-log_modelcv <- fit_resamples(full_log_wf, resamples = data_cv10_class, metrics = metric_set(accuracy,sens,yardstick::spec))
+log_modelcv <- fit_resamples(log_wf, resamples = data_cv10_class, metrics = metric_set(accuracy,sens,yardstick::spec))
 
 log_modelcv %>%
   collect_metrics()
 ```
 
+### Picking Threshold
+
+#### Boxplots
+
 ```{r}
-# Soft Predictions on Training Data
 final_output <- log_fit %>% predict(new_data = imdb_clean_class, type='prob') %>% bind_cols(imdb_clean_class)
 
 final_output %>%
   ggplot(aes(x = flop, y = .pred_TRUE)) +
   geom_boxplot()
 ```
+
+#### ROC Curve
 
 ```{r}
 # Use soft predictions
@@ -729,12 +632,14 @@ final_output %>%
     autoplot()
 ```
 
+#### J Index vs. Threshold
+
 ```{r}
-# thresholds in terms of reference level
+# Thresholds in terms of reference level
 threshold_output <- final_output %>%
     threshold_perf(truth = flop, estimate = .pred_FALSE, thresholds = seq(0,1,by=.01)) 
 
-# J-index v. threshold for no flop
+# J-index v. Threshold for no flop
 threshold_output %>%
     filter(.metric == 'j_index') %>%
     ggplot(aes(x = .threshold, y = .estimate)) +
@@ -743,6 +648,8 @@ threshold_output %>%
     theme_classic()
 ```
 
+#### J Index vs. Distance
+
 ```{r}
 threshold_output %>%
     filter(.metric == 'j_index') %>%
@@ -750,7 +657,7 @@ threshold_output %>%
 ```
 
 ```{r}
-# Distance v. threshold for not_spam
+# Distance vs. Threshold
 
 threshold_output %>%
     filter(.metric == 'distance') %>%
@@ -766,6 +673,8 @@ threshold_output %>%
     arrange(.estimate)
 ```
 
+### Obtain Evaluation Metrics
+
 ```{r}
 log_metrics <- metric_set(accuracy,sens,yardstick::spec)
 
@@ -778,20 +687,16 @@ final_output %>%
   conf_mat(truth = flop, estimate = .pred_class)
 ```
 
+### Predictions
+
 ```{r}
 predict(log_fit, new_data = data.frame(No_of_Votes = 10000, Runtime = 112, IMDB_Rating = 9.8,
                                         Genre_1 = "Drama"), type = "prob"
 )
 ```
 
+We manually performed the hard predictions.
 
-```{r}
-predict(log_fit, new_data = data.frame(No_of_Votes = 10000, Runtime = 112, IMDB_Rating = 9.8,
-                                        Genre_1 = "Drama"), type = "class"
-)
-```
-
-*Must manually calculate hard prediction*
 
 ### K-Means Clustering
 
