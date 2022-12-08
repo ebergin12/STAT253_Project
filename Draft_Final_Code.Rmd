@@ -505,7 +505,9 @@ gam1_output %>%
 The GAM with Splines obtained using TidyModels performs the best with the lowest RMSE value (1.3 compared to 1.4 for the others).
 
 
-# Bagging and Random Forests
+# Classification Models
+
+## Create New Dataset for Classification
 
 ```{r}
 imdb_clean_class <- imdb_clean %>%
@@ -513,6 +515,10 @@ imdb_clean_class <- imdb_clean %>%
   mutate(flop = as.factor(ifelse(success_ratio > 2, 'FALSE', 'TRUE'))) %>%
   drop_na(flop, No_of_Votes,Runtime, IMDB_Rating,Meta_score,Genre_1)
 ```
+
+## Random Forests Model
+
+### Model Spec, Recipe, and Workflow
 
 ```{r}
 # Model Specification
@@ -543,6 +549,8 @@ data_wf_mtry5 <- workflow() %>%
   add_recipe(data_rec)
 ```
 
+### Fit Models with Various Values for mtry
+
 ```{r}
 # Fit Models
 set.seed(123) # make sure to run this before each fit so that you have the same 1000 trees
@@ -554,6 +562,8 @@ data_fit_mtry4 <- fit(data_wf_mtry4, data = imdb_clean_class)
 set.seed(123)
 data_fit_mtry5 <- fit(data_wf_mtry5, data = imdb_clean_class)
 ```
+
+### Obtain OOB Predictions and Evaluation Metrics
 
 ```{r}
 # Custom Function to get OOB predictions, true observed outcomes and add a user-provided model label
@@ -591,7 +601,7 @@ data_rf_OOB_output %>%
   theme_classic()
 ```
 
-### Evaluating the Forest
+### Evaluating Selected Model - Confusion Matrix
 
 ```{r}
 rf_OOB_output(data_fit_mtry4,4, imdb_clean_class %>% pull(flop)) %>%
@@ -599,6 +609,8 @@ rf_OOB_output(data_fit_mtry4,4, imdb_clean_class %>% pull(flop)) %>%
 ```
 
 ### Variable Importance
+
+#### Impurity
 
 ```{r}
 # Impurity
@@ -612,6 +624,8 @@ model_output %>%
 model_output %>% vip::vi() %>% head()
 model_output %>% vip::vi() %>% tail()
 ```
+
+#### Permuation
 
 ```{r}
 # Permutation
@@ -628,6 +642,9 @@ model_output2 %>%
 model_output2 %>% vip::vi() %>% head()
 model_output2 %>% vip::vi() %>% tail()
 ```
+
+### Violin Graphs
+
 ```{r}
 ggplot(imdb_clean_class, aes(x = flop, y = No_of_Votes)) +
     geom_violin() + theme_classic()
@@ -642,7 +659,7 @@ ggplot(imdb_clean_class, aes(x = flop, y = Meta_score)) +
     geom_violin() + theme_classic()
 ```
 
-# Logistic Regression
+## Logistic Regression
 
 ```{r}
 set.seed(123)
