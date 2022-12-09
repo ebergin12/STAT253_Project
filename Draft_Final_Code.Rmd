@@ -74,7 +74,7 @@ head(imdb_clean)
 data_cv10 <- vfold_cv(imdb_clean, v = 10)
 ```
 
-### Model Spec, Recipes, and Workflows for Linear Regression Model
+### Model Spec, Recipes, and Workflows
 
 ```{r}
 # Model Spec
@@ -117,7 +117,9 @@ full_lm_modelcv %>%
   collect_metrics()
 ```
 
-## Perform LASSO for Subset Selection
+## Perform LASSO for Subset Selection (Regression Model)
+
+### Model Spec, Recipes, and Workflow
 
 ```{r}
 # Lasso Model Spec with tune
@@ -144,6 +146,11 @@ data_rec_lasso <- recipe(Gross ~ Runtime + IMDB_Rating + Meta_score +
 lasso_wf_tune <- workflow() %>% 
   add_recipe(data_rec_lasso) %>%
   add_model(lm_lasso_spec_tune) 
+```
+
+### Tune Model and Cross Validation
+
+```{r}
 
 # Tune Model (trying a variety of values of Lambda penalty)
 
@@ -193,7 +200,7 @@ tidy(final_fit)
 final_fit %>% tidy() %>% filter(estimate != 0)
 ```
 
-### Obtain Evaluation Metrics for Full Model
+### Obtain Evaluation Metrics for Lasso Model
 
 ```{r}
 lasso_fit %>%
@@ -274,7 +281,7 @@ gam_mod1 %>% pluck('fit') %>% summary()
 gam_mod1 %>% pluck('fit') %>% plot()
 ```
 
-### Evaluation Metrics
+### Obtain Evaluation Metrics for GAM1
 
 ```{r}
 gam1_output <- gam_mod1%>% 
@@ -328,7 +335,7 @@ cv_output_spline2 <- fit_resamples(
 
 ```
 
-### Evaluation Metrics
+### Obtain Evaluation Metrics for GAM2
 
 ```{r}
 cv_output_spline2 %>% collect_metrics()
@@ -345,7 +352,7 @@ cv_output_spline2 %>% collect_metrics()
 
 The GAM created using TidyModels performs better than the recipe and GAMs. Likely has to do with the degrees of freedom of the splines.
 
-### Visualize Residuals for Final GAM
+### Visualize Residuals for Final GAM (GAM1)
 
 ```{r}
 
@@ -383,7 +390,7 @@ ggplot(gam1_output, aes(x = No_of_Votes, y = resid)) +
 
 There does not appear to be any significant bias after analyzing the residuals.
 
-## Compare All Linear Regression Model Performance
+## Compare All Regression Model Performance
 
 ```{r}
 full_lm_modelcv %>% collect_metrics() #OLS
@@ -587,21 +594,19 @@ log_fit <- fit(log_wf, data = imdb_clean_class)
 tidy(log_fit)
 ```
 
-### Adds Variable for Odds Ratio
+### Add Variable for Odds Ratio
 
 ```{r}
 log_fit %>% tidy() %>%
   mutate(OR = exp(estimate))
 ```
 
+### Cross Validation and Evaluation Metrics
 
 ```{r}
 # Creation of CV Folds
 data_cv10_class <- vfold_cv(imdb_clean_class, v = 10)
 ```
-
-
-# Cross Validation and Evaluation Metrics
 
 ```{r}
 log_modelcv <- fit_resamples(log_wf, resamples = data_cv10_class, metrics = metric_set(accuracy,sens,yardstick::spec))
@@ -672,7 +677,7 @@ threshold_output %>%
     arrange(.estimate)
 ```
 
-### Obtain Evaluation Metrics
+### Obtain Evaluation Metrics for Logistic Regression
 
 ```{r}
 log_metrics <- metric_set(accuracy,sens,yardstick::spec)
@@ -772,12 +777,16 @@ imdb_clean %>%
 #### Exploring Genre Breakdown
 
 ```{r}
+
+# Count of Movies per Genre (Primary Genre)
 imdb_clean %>%
   count(Genre_1)
 
+# Count of Movies per Genre (Secondary Genre)
 imdb_clean %>%
   count(Genre_2)
 
+# Count of Movies per Genre (Overall Genre)
 imdb_clean %>%
   count(New_Genre)
 ```
@@ -785,31 +794,40 @@ imdb_clean %>%
 ```{r}
 # Genres vs Cluster
 
+# How many of each Genre 1 in each cluster
 imdb_clean %>%
   group_by(kclust_8) %>%
   count(Genre_1)
 
+# How many of each Genre 2 in each cluster
 imdb_clean %>%
   group_by(kclust_8) %>%
   count(Genre_2)
 
+# How many movies in each cluster
 imdb_clean%>%
   count(kclust_8)
 ```
 
+#### Visualizations of Genres in Each Cluster
+
 ```{r}
+
+# Genre 1
 imdb_clean %>%
   ggplot(aes(x = kclust_8, fill = Genre_1)) +
     geom_bar(position = "fill") +
     labs(x = "Cluster") + 
     theme_classic()
 
+# Genre 2
 imdb_clean %>%
   ggplot(aes(x = kclust_8, fill = Genre_2)) +
     geom_bar(position = "fill") +
     labs(x = "Cluster") + 
     theme_classic()
 
+# Overall Genre
 imdb_clean %>%
   ggplot(aes(x = kclust_8, fill = New_Genre)) +
     geom_bar(position = "fill") +
@@ -818,12 +836,14 @@ imdb_clean %>%
 
 ```
 
+## Hierarchial Clustering
 
-### Hierarchial Clustering
+### Set up Clustering and Distance Matrix
 
 ```{r}
-# Random subsample of 50 penguins
+# Random subsample of 25 Movies
 set.seed(253)
+
 imdb_hc <- imdb_clean %>%
     slice_sample(n = 25)
 
@@ -838,38 +858,62 @@ imdb_hc_full <- imdb_clean %>%
 summary(imdb_hc_sub)
 
 # Compute a distance matrix on the scaled data
-dist_mat_scaled <- dist(scale(imdb_hc_sub))
+dist_mat_scaled <- dist(scale(imdb_hc_sub))     # Subset Distance Matrix
 
-dist_mat_full <- dist(scale(imdb_hc_full))
+dist_mat_full <- dist(scale(imdb_hc_full))      # Full Data Distance Matrix
 ```
 
-```{r}
-imdb_hc_avg <- hclust(dist_mat_scaled, method = "average")
-imdb_full_avg <- hclust(dist_mat_full, method = "average")
+### Create Clusters
 
-# Plot dendrogram
+```{r}
+imdb_hc_avg <- hclust(dist_mat_scaled, method = "average")    # Subset
+imdb_full_avg <- hclust(dist_mat_full, method = "average")    # Full Data
+
+```
+
+### Visualize Dendrograms
+
+```{r}
+# Plot dendrogram on Subset
 plot(imdb_hc_avg)
 ```
 
 ```{r}
+# Adding Genre Labels
 
 plot(imdb_hc_avg, labels = imdb_hc$Genre_1)
 
 plot(imdb_hc_avg, labels = paste(imdb_hc$Genre_1, imdb_hc$Genre_2))
+
+plot(imdb_hc_avg, labels = paste(imdb_hc$Genre_1, imdb_hc$Genre_2, imdb_hc$Genre_3))
+
+plot(imdb_hc_avg, labels = paste(imdb_hc$New_Genre))
 ```
+
+### Cutting the Tree
 
 ```{r}
 imdb_clean <- imdb_clean %>%
     mutate(
         hclust_num = factor(cutree(imdb_full_avg, k = 3)) # Cut into 6 clusters (k)
     )
-
 ```
+
+### Visualizing Genres in Final Clusters (Full Data)
 
 ```{r}
 ggplot(imdb_clean, aes(x = hclust_num, fill = Genre_1)) +
     geom_bar(position = "fill") +
     labs(x = "Cluster") + 
+    theme_classic()
+
+ggplot(imdb_clean, aes(x = hclust_num, fill = New_Genre)) +
+    geom_bar(position = "fill") +
+    labs(x = "Cluster") + 
+    theme_classic()
+
+ggplot(imdb_clean, aes(x = Budget, y = Gross, color = hclust_num)) +
+    geom_point() +
     theme_classic()
 ```
 
