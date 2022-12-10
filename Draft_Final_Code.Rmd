@@ -712,7 +712,9 @@ ggplot(imdb_clean, aes(x = Budget, y = Runtime)) +
   geom_point() + theme_classic()
 
 ggplot(imdb_clean, aes(x = Budget, y = Gross)) + 
-  geom_point() + theme_classic()
+  geom_point() + 
+  labs(x = "Budget", y = "Log(Gross)") +
+  theme_classic()
 
 ggplot(imdb_clean, aes(x = No_of_Votes, y = Runtime)) + 
   geom_point() + theme_classic()
@@ -915,5 +917,8 @@ ggplot(imdb_clean, aes(x = hclust_num, fill = New_Genre)) +
 ggplot(imdb_clean, aes(x = Budget, y = Gross, color = hclust_num)) +
     geom_point() +
     theme_classic()
+
+imdb_clean %>%
+  count(hclust_num)
 ```
 

@@ -35,8 +35,7 @@ imdb_top_1000 <- read_csv("~/Desktop/Statistical Machine Learning/R Files/Final 
 ```{r}
 imdb_clean <- imdb_top_1000 %>%
   cSplit("Genre", sep = ",", direction = "wide") %>%
-  mutate(Gross = log(Revenue-Budget)) %>%
-  select(-...15)
+  mutate(Gross = log(Revenue-Budget))
 
 runtime_clean <- imdb_top_1000$Runtime %>%
   str_replace(" min", "") %>%
@@ -156,7 +155,7 @@ imdb_hc <- imdb_clean %>%
 
 # Select the variables to be used in clustering
 imdb_hc_sub <- imdb_hc %>%
-    select(Gross, Budget)
+    select(Budget, Runtime)
 
 # Summary statistics for the variables
 summary(imdb_hc_sub)
@@ -179,5 +178,79 @@ plot(imdb_hc_avg, labels = imdb_hc$Genre_1)
 plot(imdb_hc_avg, labels = paste(imdb_hc$Genre_1, imdb_hc$Genre_2))
 ```
 
+
+```{r}
+# Random subsample of 25 Movies
+set.seed(253)
+
+imdb_hc <- imdb_clean %>%
+    slice_sample(n = 25)
+
+# Select the variables to be used in clustering
+imdb_hc_sub <- imdb_hc %>%
+    select(Gross, Budget)
+
+imdb_hc_full1 <- imdb_clean %>%
+  select(Gross, Budget)
+
+imdb_hc_full2 <- imdb_clean %>%
+  select(Budget, Runtime)
+
+# Summary statistics for the variables
+summary(imdb_hc_sub)
+
+# Compute a distance matrix on the scaled data
+dist_mat_scaled <- dist(scale(imdb_hc_sub))     # Subset Distance Matrix
+
+dist_mat_full1 <- dist(scale(imdb_hc_full1))      # Full Data Distance Matrix
+dist_mat_full2 <- dist(scale(imdb_hc_full2))      # Full Data Distance Matrix
+```
+
+### Create Clusters
+
+```{r}
+imdb_hc_avg <- hclust(dist_mat_scaled, method = "average")    # Subset
+imdb_full_avg1 <- hclust(dist_mat_full1, method = "average")    # Full Data
+imdb_full_avg2 <- hclust(dist_mat_full2, method = "average")    # Full Data
+```
+
+
+### Cutting the Tree
+
+```{r}
+one_imdb_clean <- imdb_clean %>%
+    mutate(
+        hclust_num = factor(cutree(imdb_full_avg1, k = 3)) # Cut into 6 clusters (k)
+    )
+
+two_imdb_clean <- imdb_clean %>%
+    mutate(
+        hclust_num = factor(cutree(imdb_full_avg2, k = 2)) # Cut into 6 clusters (k)
+    )
+```
+
+### Visualizing Genres in Final Clusters (Full Data)
+
+```{r}
+ggplot(one_imdb_clean, aes(x = hclust_num, fill = Genre_1)) +
+    geom_bar(position = "fill") +
+    labs(x = "Cluster") + 
+    theme_classic()
+
+ggplot(two_imdb_clean, aes(x = hclust_num, fill = Genre_1)) +
+    geom_bar(position = "fill") +
+    labs(x = "Cluster") + 
+    theme_classic()
+
+ggplot(one_imdb_clean, aes(x = hclust_num, fill = New_Genre)) +
+    geom_bar(position = "fill") +
+    labs(x = "Cluster") + 
+    theme_classic()
+
+ggplot(two_imdb_clean, aes(x = hclust_num, fill = New_Genre)) +
+    geom_bar(position = "fill") +
+    labs(x = "Cluster") + 
+    theme_classic()
+```
 
 
