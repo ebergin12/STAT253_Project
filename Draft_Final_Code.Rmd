@@ -413,7 +413,20 @@ The GAM with Splines obtained using TidyModels performs the best with the lowest
 ## Create New Dataset for Classification
 
 ```{r}
-imdb_clean_class <- imdb_clean %>%
+imdb_class <- imdb_top_1000 %>%
+  cSplit("Genre", sep = ",", direction = "wide") %>%
+  mutate(Gross = Revenue-Budget)
+
+runtime_clean <- imdb_top_1000$Runtime %>%
+  str_replace(" min", "") %>%
+  as.numeric()
+
+imdb_class$Runtime <- runtime_clean
+
+imdb_class <- imdb_class %>%
+  drop_na(Gross, Budget)
+
+imdb_clean_class <- imdb_class %>%
   mutate(success_ratio = Revenue/Budget) %>%
   mutate(flop = as.factor(ifelse(success_ratio > 2, 'FALSE', 'TRUE'))) %>%
   drop_na(flop, No_of_Votes,Runtime, IMDB_Rating,Meta_score,Genre_1)
@@ -683,11 +696,11 @@ threshold_output %>%
 log_metrics <- metric_set(accuracy,sens,yardstick::spec)
 
 final_output %>%
-    mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .12)) %>%
+    mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .25)) %>%
     log_metrics(truth = flop, estimate = .pred_class, event_level = 'second')
 
 final_output %>%
-  mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .12)) %>%
+  mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .25)) %>%
   conf_mat(truth = flop, estimate = .pred_class)
 ```
 
@@ -713,7 +726,9 @@ ggplot(imdb_clean, aes(x = Budget, y = Runtime)) +
 
 ggplot(imdb_clean, aes(x = Budget, y = Gross)) + 
   geom_point() + 
-  labs(x = "Budget", y = "Log(Gross)") +
+  labs(x = "Budget in USD", 
+       y = "Gross Profit in USD (Log Scale)", 
+       title = "Preliminary Visualizations") +
   theme_classic()
 
 ggplot(imdb_clean, aes(x = No_of_Votes, y = Runtime)) + 
@@ -847,14 +862,16 @@ imdb_clean %>%
 set.seed(253)
 
 imdb_hc <- imdb_clean %>%
-    slice_sample(n = 25)
+  slice_sample(n = 25) %>%
+  filter(Budget != 0)
 
 # Select the variables to be used in clustering
 imdb_hc_sub <- imdb_hc %>%
-    select(Gross, Budget)
+  select(Gross, Budget)
 
 imdb_hc_full <- imdb_clean %>%
-  select(Gross, Budget)
+  select(Gross, Budget) %>%
+  filter(Budget != 0)
 
 # Summary statistics for the variables
 summary(imdb_hc_sub)
@@ -895,7 +912,8 @@ plot(imdb_hc_avg, labels = paste(imdb_hc$New_Genre))
 ### Cutting the Tree
 
 ```{r}
-imdb_clean <- imdb_clean %>%
+imdb_clean_clust <- imdb_clean %>%
+  filter(Budget != 0) %>%
     mutate(
         hclust_num = factor(cutree(imdb_full_avg, k = 3)) # Cut into 6 clusters (k)
     )
@@ -904,21 +922,24 @@ imdb_clean <- imdb_clean %>%
 ### Visualizing Genres in Final Clusters (Full Data)
 
 ```{r}
-ggplot(imdb_clean, aes(x = hclust_num, fill = Genre_1)) +
+ggplot(imdb_clean_clust, aes(x = hclust_num, fill = Genre_1)) +
     geom_bar(position = "fill") +
     labs(x = "Cluster") + 
     theme_classic()
 
-ggplot(imdb_clean, aes(x = hclust_num, fill = New_Genre)) +
+ggplot(imdb_clean_clust, aes(x = hclust_num, fill = New_Genre)) +
     geom_bar(position = "fill") +
     labs(x = "Cluster") + 
     theme_classic()
 
-ggplot(imdb_clean, aes(x = Budget, y = Gross, color = hclust_num)) +
+ggplot(imdb_clean_clust, aes(x = Budget, y = Gross, color = hclust_num)) +
     geom_point() +
-    theme_classic()
+    theme_classic() 
 
-imdb_clean %>%
+imdb_clean_clust %>%
   count(hclust_num)
+
+imdb_clean_clust %>%
+  count(Genre_1)
 ```
 
