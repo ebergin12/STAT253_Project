@@ -278,7 +278,7 @@ gam_mod1 %>% pluck('fit') %>% summary()
 ```{r}
 # Visualize: Look at the estimated non-linear functions
 
-gam_mod1 %>% pluck('fit') %>% plot()
+gam_mod1 %>% pluck('fit') %>% plot(main = "Non-Linear Visualizations")
 ```
 
 ### Obtain Evaluation Metrics for GAM1
@@ -746,7 +746,9 @@ We manually performed the hard predictions with threshold = .78.
 ggplot(imdb_clean, aes(x = Budget, y = Runtime)) + 
   geom_point() + theme_classic()
 
-ggplot(imdb_clean, aes(x = Budget, y = Gross)) + 
+imdb_clean %>%
+  filter(Budget > 1) %>% 
+  ggplot(aes(x = Budget, y = Gross)) + 
   geom_point() + 
   labs(x = "Budget in USD", 
        y = "Gross Profit in USD (Log Scale)", 
