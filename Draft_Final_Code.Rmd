@@ -965,9 +965,13 @@ ggplot(imdb_clean_clust, aes(x = hclust_num8, fill = Genre_1)) +
 
 ```{r}
 ggplot(imdb_clean_clust, aes(x = hclust_num2, fill = Genre_1)) +
-    geom_bar(position = "fill") +
-    labs(x = "Cluster") + 
-    theme_classic()
+  geom_bar(position = "fill") +
+  labs(x = "Cluster", 
+       y = "Proportion of Cluster", 
+       title = "Selecting Number of Clusters (k)", 
+       fill = "Genre 1") + 
+  theme_classic() + 
+  theme(plot.title = element_text(size = 20, face = "bold"))
 
 ggplot(imdb_clean_clust, aes(x = hclust_num2, fill = New_Genre)) +
     geom_bar(position = "fill") +
@@ -978,7 +982,8 @@ ggplot(imdb_clean_clust, aes(x = Budget, y = Gross, color = hclust_num2)) +
   geom_point() +
   labs(x = "Budget in USD", 
        y = "Gross Profit in USD (Log Scale)", 
-       title = "Visualizing Clusters: Gross Profit vs. Budget") + 
+       title = "Visualizing Clusters: Gross Profit vs. Budget",
+       color = "Clusters") + 
   theme_classic() + 
   theme(plot.title = element_text(size = 20, face = "bold"))
 
