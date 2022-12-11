@@ -452,7 +452,7 @@ data_rec <- recipe(flop ~ No_of_Votes + Runtime + IMDB_Rating + Meta_score + Gen
   step_naomit(flop, No_of_Votes, Runtime, IMDB_Rating, Meta_score, Genre_1)
 
 # Create Workflows
-data_wf_mtry3 <- workflow() %>%
+ data_wf_mtry3 <- workflow() %>%
   add_model(rf_spec %>% set_args(mtry = 3)) %>%
   add_recipe(data_rec) 
 
@@ -469,7 +469,7 @@ data_wf_mtry5 <- workflow() %>%
 
 ```{r}
 # Fit Models
-set.seed(123) # make sure to run this before each fit so that you have the same 1000 trees
+set.seed(123)
 data_fit_mtry3 <- fit(data_wf_mtry3, data = imdb_clean_class)
 
 set.seed(123) 
@@ -665,13 +665,13 @@ threshold_output %>%
     theme_classic()
 ```
 
-#### J Index vs. Distance
-
 ```{r}
 threshold_output %>%
     filter(.metric == 'j_index') %>%
     arrange(desc(.estimate))
 ```
+
+#### Distance vs. Threshold
 
 ```{r}
 # Distance vs. Threshold
@@ -690,17 +690,27 @@ threshold_output %>%
     arrange(.estimate)
 ```
 
-### Obtain Evaluation Metrics for Logistic Regression
+### Obtain Evaluation Metrics for Logistic Regression Model with Thresholds
 
 ```{r}
+# To determine final threshold
+
 log_metrics <- metric_set(accuracy,sens,yardstick::spec)
 
 final_output %>%
-    mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .25)) %>%
+    mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .78)) %>%
     log_metrics(truth = flop, estimate = .pred_class, event_level = 'second')
 
 final_output %>%
-  mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .25)) %>%
+    mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .71)) %>%
+    log_metrics(truth = flop, estimate = .pred_class, event_level = 'second')
+
+final_output %>%
+  mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .78)) %>%
+  conf_mat(truth = flop, estimate = .pred_class)
+
+final_output %>%
+  mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .71)) %>%
   conf_mat(truth = flop, estimate = .pred_class)
 ```
 
@@ -712,7 +722,7 @@ predict(log_fit, new_data = data.frame(No_of_Votes = 10000, Runtime = 112, IMDB_
 )
 ```
 
-We manually performed the hard predictions.
+We manually performed the hard predictions with threshold = .78.
 
 # Unsupervised Learning - Clustering
 
@@ -871,7 +881,7 @@ imdb_hc_sub <- imdb_hc %>%
 
 imdb_hc_full <- imdb_clean %>%
   select(Gross, Budget) %>%
-  filter(Budget != 0)
+  filter(Budget > 1)
 
 # Summary statistics for the variables
 summary(imdb_hc_sub)
@@ -882,12 +892,11 @@ dist_mat_scaled <- dist(scale(imdb_hc_sub))     # Subset Distance Matrix
 dist_mat_full <- dist(scale(imdb_hc_full))      # Full Data Distance Matrix
 ```
 
-### Create Clusters
+### Perform Fusing Process
 
 ```{r}
 imdb_hc_avg <- hclust(dist_mat_scaled, method = "average")    # Subset
 imdb_full_avg <- hclust(dist_mat_full, method = "average")    # Full Data
-
 ```
 
 ### Visualize Dendrograms
@@ -900,46 +909,101 @@ plot(imdb_hc_avg)
 ```{r}
 # Adding Genre Labels
 
-plot(imdb_hc_avg, labels = imdb_hc$Genre_1)
+plot(imdb_hc_avg, labels = imdb_hc$Genre_1, main = "Movie Clusters", xlab = NULL)
 
 plot(imdb_hc_avg, labels = paste(imdb_hc$Genre_1, imdb_hc$Genre_2))
 
-plot(imdb_hc_avg, labels = paste(imdb_hc$Genre_1, imdb_hc$Genre_2, imdb_hc$Genre_3))
+plot(imdb_hc_avg, 
+     main = "Visualizing Movie Clusters",
+     labels = paste(imdb_hc$Genre_1, imdb_hc$Genre_2, imdb_hc$Genre_3), 
+     hang = -1, 
+     cex = 1)
 
 plot(imdb_hc_avg, labels = paste(imdb_hc$New_Genre))
 ```
 
-### Cutting the Tree
+### Cutting the Tree (Choosing k)
 
 ```{r}
 imdb_clean_clust <- imdb_clean %>%
-  filter(Budget != 0) %>%
+  filter(Budget > 1) %>%
     mutate(
-        hclust_num = factor(cutree(imdb_full_avg, k = 3)) # Cut into 6 clusters (k)
+        hclust_num2 = factor(cutree(imdb_full_avg, k = 2)), # Cut into 2 clusters (k)
+        hclust_num4 = factor(cutree(imdb_full_avg, k = 4)), # Cut into 4 clusters (k)
+        hclust_num8 = factor(cutree(imdb_full_avg, k = 8)) # Cut into 8 clusters (k)
     )
 ```
+
+```{r}
+ggplot(imdb_clean_clust, aes(x = hclust_num2, fill = Genre_1)) +
+  geom_bar(position = "fill") +
+  labs(x = "Cluster", 
+       y = "Proportion of Cluster", 
+       title = "Selecting Number of Clusters (k)") + 
+  theme_classic() + 
+  theme(plot.title = element_text(size = 20, face = "bold"))
+
+ggplot(imdb_clean_clust, aes(x = hclust_num4, fill = Genre_1)) +
+  geom_bar(position = "fill") +
+  labs(x = "Cluster", 
+       y = "Proportion of Cluster", 
+       title = "Selecting Number of Clusters (k)") + 
+  theme_classic() + 
+  theme(plot.title = element_text(size = 20, face = "bold"))
+
+ggplot(imdb_clean_clust, aes(x = hclust_num8, fill = Genre_1)) +
+  geom_bar(position = "fill") +
+  labs(x = "Cluster", 
+       y = "Proportion of Cluster", 
+       title = "Selecting Number of Clusters (k)") + 
+  theme_classic() + 
+  theme(plot.title = element_text(size = 20, face = "bold"))
+```
+
 
 ### Visualizing Genres in Final Clusters (Full Data)
 
 ```{r}
-ggplot(imdb_clean_clust, aes(x = hclust_num, fill = Genre_1)) +
+ggplot(imdb_clean_clust, aes(x = hclust_num2, fill = Genre_1)) +
     geom_bar(position = "fill") +
     labs(x = "Cluster") + 
     theme_classic()
 
-ggplot(imdb_clean_clust, aes(x = hclust_num, fill = New_Genre)) +
+ggplot(imdb_clean_clust, aes(x = hclust_num2, fill = New_Genre)) +
     geom_bar(position = "fill") +
     labs(x = "Cluster") + 
     theme_classic()
 
-ggplot(imdb_clean_clust, aes(x = Budget, y = Gross, color = hclust_num)) +
-    geom_point() +
-    theme_classic() 
+ggplot(imdb_clean_clust, aes(x = Budget, y = Gross, color = hclust_num2)) +
+  geom_point() +
+  labs(x = "Budget in USD", 
+       y = "Gross Profit in USD (Log Scale)", 
+       title = "Visualizing Clusters: Gross Profit vs. Budget") + 
+  theme_classic() + 
+  theme(plot.title = element_text(size = 20, face = "bold"))
+
+ggplot(imdb_clean_clust, aes(x = hclust_num2, y = Budget)) +
+  geom_boxplot() +
+  labs(x = "Cluster", 
+       y = "Budget in USD", 
+       title = "Visualizing Clusters: Budget") + 
+  theme_classic() + 
+  theme(plot.title = element_text(size = 20, face = "bold"))
+
+ggplot(imdb_clean_clust, aes(x = hclust_num2, y = Gross)) +
+  geom_boxplot() +
+  labs(x = "Cluster", 
+       y = "Gross Profit in USD (Log Scale)", 
+       title = "Visualizing Clusters: Gross Profit") + 
+  theme_classic() + 
+  theme(plot.title = element_text(size = 20, face = "bold"))
 
 imdb_clean_clust %>%
-  count(hclust_num)
+  count(hclust_num2)
 
 imdb_clean_clust %>%
-  count(Genre_1)
+  group_by(hclust_num2) %>%
+  summarize(mean(Gross), sd(Gross), min(Gross), max(Gross),
+            mean((Budget/100000)), sd((Budget/100000)), min((Budget/100000)), max((Budget/100000)))
 ```
 
