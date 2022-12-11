@@ -307,9 +307,9 @@ spline_rec <- recipe(Gross ~ Runtime + IMDB_Rating + Meta_score +
     step_normalize(all_numeric_predictors()) %>% 
     step_dummy(all_nominal_predictors()) %>%
     step_naomit(Gross) %>%
-    step_ns(Runtime, deg_free = 19) %>%
-    step_ns(No_of_Votes, deg_free = 9) %>%
-    step_ns(IMDB_Rating, deg_free = 9)
+    step_ns(Runtime, deg_free = 20) %>%
+    step_ns(No_of_Votes, deg_free = 10) %>%
+    step_ns(IMDB_Rating, deg_free = 10)
 
 
 spline_rec %>% prep(imdb_clean) %>% juice()
