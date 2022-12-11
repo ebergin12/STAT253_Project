@@ -367,24 +367,36 @@ ggplot(gam1_output, aes(x = .pred, y = resid)) +
     geom_point() +
     geom_smooth() +
     geom_hline(yintercept = 0, color = "red") + 
+    labs(x = "Prediction",
+         y = "Residuals", 
+         title = "Residuals vs. Predictions") +
     theme_classic()
 
 ggplot(gam1_output, aes(x = Runtime, y = resid)) +
     geom_point() +
     geom_smooth() +
-    geom_hline(yintercept = 0, color = "red") + 
+    geom_hline(yintercept = 0, color = "red")  + 
+    labs(x = "Runtime",
+         y = "Residuals", 
+         title = "Residuals vs. Runtime") +
     theme_classic()
 
 ggplot(gam1_output, aes(x = IMDB_Rating, y = resid)) +
     geom_point() +
     geom_smooth() +
-    geom_hline(yintercept = 0, color = "red") + 
+    geom_hline(yintercept = 0, color = "red")  + 
+    labs(x = "IMDB Rating",
+         y = "Residuals", 
+         title = "Residuals vs. IMDB Rating") +
     theme_classic()
 
 ggplot(gam1_output, aes(x = No_of_Votes, y = resid)) +
     geom_point() +
     geom_smooth() +
-    geom_hline(yintercept = 0, color = "red") + 
+    geom_hline(yintercept = 0, color = "red")  + 
+    labs(x = "Number of Votes",
+         y = "Residuals", 
+         title = "Residuals vs. Number of Votes") +
     theme_classic()
 ```
 
