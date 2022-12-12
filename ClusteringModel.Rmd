@@ -194,7 +194,7 @@ imdb_hc_full1 <- imdb_clean %>%
   select(Gross, Budget)
 
 imdb_hc_full2 <- imdb_clean %>%
-  select(Budget, Runtime)
+  select(Budget, Revenue)
 
 # Summary statistics for the variables
 summary(imdb_hc_sub)
@@ -225,7 +225,7 @@ one_imdb_clean <- imdb_clean %>%
 
 two_imdb_clean <- imdb_clean %>%
     mutate(
-        hclust_num = factor(cutree(imdb_full_avg2, k = 2)) # Cut into 6 clusters (k)
+        hclust_num = factor(cutree(imdb_full_avg2, k = 3)) # Cut into 6 clusters (k)
     )
 ```
 
@@ -251,6 +251,12 @@ ggplot(two_imdb_clean, aes(x = hclust_num, fill = New_Genre)) +
     geom_bar(position = "fill") +
     labs(x = "Cluster") + 
     theme_classic()
+
+one_imdb_clean %>%
+  count(hclust_num)
+
+two_imdb_clean %>%
+  count(hclust_num)
 ```
 
 

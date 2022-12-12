@@ -103,6 +103,8 @@ full_lm_wf <- workflow() %>%
 ### Fit Full Model
 
 ```{r}
+# All predictors included
+
 full_lm_model <- fit(full_lm_wf, data = imdb_clean) 
 
 full_lm_model %>% tidy()
@@ -111,6 +113,8 @@ full_lm_model %>% tidy()
 ### Obtain Evaluation Metrics for Full Model
 
 ```{r}
+# Cross Validation Performed (10 folds)
+
 full_lm_modelcv <- fit_resamples(full_lm_wf, resamples = data_cv10, metrics = metric_set(rmse, rsq, mae))
 
 full_lm_modelcv %>%
@@ -151,8 +155,7 @@ lasso_wf_tune <- workflow() %>%
 ### Tune Model and Cross Validation
 
 ```{r}
-
-# Tune Model (trying a variety of values of Lambda penalty)
+# Tune Model (to select best Lambda penalty) -- via Cross Validation
 
 penalty_grid <- grid_regular(
   penalty(range = c(-3, 1)),
@@ -185,13 +188,11 @@ lasso_mod
 ### Fit Final LASSO Model
 
 ```{r}
-# Fit Final Model
+# Fit Final Model -- Subset of Variables
 
 final_wf <- finalize_workflow(lasso_wf_tune, best_penalty) # incorporates penalty value to workflow
 
 final_fit <- fit(final_wf, data = imdb_clean)
-
-lasso_fit <- fit_resamples(final_wf, resamples = data_cv10, metrics = metric_set(rmse, rsq, mae))
 
 tidy(final_fit)
 
@@ -203,6 +204,10 @@ final_fit %>% tidy() %>% filter(estimate != 0)
 ### Obtain Evaluation Metrics for Lasso Model
 
 ```{r}
+# Cross Validation Performed (10 folds)
+
+lasso_fit <- fit_resamples(final_wf, resamples = data_cv10, metrics = metric_set(rmse, rsq, mae))
+
 lasso_fit %>%
   collect_metrics()
 ```
@@ -273,7 +278,7 @@ gam_mod1 %>% pluck('fit') %>% mgcv::gam.check()
 gam_mod1 %>% pluck('fit') %>% summary() 
 ```
 
-### Visualization for Non-Linear Functions
+### Visualizations for Non-Linear Functions
 
 ```{r}
 # Visualize: Look at the estimated non-linear functions
@@ -291,6 +296,11 @@ gam1_output <- gam_mod1%>%
 
 gam1_output %>%
     rmse(truth = Gross, estimate = .pred)
+
+gam1_output %>%
+    rsq(truth = Gross, estimate = .pred)
+
+# Note: Unable to obtain std error for eval metrics bc can't perform cross validation w/ TidyModels
 ```
 
 ## GAM with Splines (Recipe)
@@ -307,6 +317,8 @@ spline_rec <- recipe(Gross ~ Runtime + IMDB_Rating + Meta_score +
     step_ns(Runtime, deg_free = 20) %>%
     step_ns(No_of_Votes, deg_free = 10) %>%
     step_ns(IMDB_Rating, deg_free = 10)
+# Chose degrees of freedom to attempt to match # of knots from TidyModels
+# May not be an exact match, but it's close
 
 
 spline_rec %>% prep(imdb_clean) %>% juice()
@@ -324,43 +336,44 @@ spline_wf <- workflow() %>%
     add_model(lm_spec) %>%
     add_recipe(spline_rec)
 
+GAM2_fit <- fit(spline_wf, data = imdb_clean)
+
+tidy(GAM2_fit)
+```
+
+### Obtain Evaluation Metrics for GAM2
+
+```{r}
+# Cross Validation Performed (10 folds)
+
 cv_output_spline2 <- fit_resamples( 
   spline_wf, # workflow
   resamples = data_cv10, # cv folds
   metrics = metric_set(mae,rmse,rsq)
 )
 
-```
-
-### Obtain Evaluation Metrics for GAM2
-
-```{r}
 cv_output_spline2 %>% collect_metrics()
 ```
 
 ## Compare GAMs
 
 ```{r}
+# Compare RMSE values --> pick model with lower RMSE
+
 gam1_output %>%
     rmse(truth = Gross, estimate = .pred)
 
 cv_output_spline2 %>% collect_metrics()
 ```
 
-The GAM created using TidyModels performs better than the recipe and GAMs. Likely has to do with the degrees of freedom of the splines.
+The GAM created using TidyModels performs better than the recipe GAM based on RMSE. Likely has to do with the degrees of freedom of the splines. However, it is worth noting that we were unable to perform cross validation on the TidyModels GAM.
 
 ### Visualize Residuals for Final GAM (GAM1)
 
 ```{r}
+# Visualize Residuals for Final GAM (TidyModels GAM)
 
-# Visualize Residuals
-cv_output_spline2 <- new_mod %>%
-    predict(new_data = imdb_clean) %>%
-    bind_cols(imdb_clean) %>%
-    mutate(resid = Gross - .pred)
-
-
-ggplot(cv_output_spline2, aes(x = .pred, y = resid)) +
+ggplot(gam1_output, aes(x = .pred, y = resid)) +
     geom_point() +
     geom_smooth() +
     geom_hline(yintercept = 0, color = "red") + 
@@ -369,7 +382,7 @@ ggplot(cv_output_spline2, aes(x = .pred, y = resid)) +
          title = "Residuals vs. Predictions") +
     theme_classic()
 
-ggplot(cv_output_spline2, aes(x = Runtime, y = resid)) +
+ggplot(gam1_output, aes(x = Runtime, y = resid)) +
     geom_point() +
     geom_smooth() +
     geom_hline(yintercept = 0, color = "red")  + 
@@ -378,7 +391,7 @@ ggplot(cv_output_spline2, aes(x = Runtime, y = resid)) +
          title = "Residuals vs. Runtime") +
     theme_classic()
 
-ggplot(cv_output_spline2, aes(x = IMDB_Rating, y = resid)) +
+ggplot(gam1_output, aes(x = IMDB_Rating, y = resid)) +
     geom_point() +
     geom_smooth() +
     geom_hline(yintercept = 0, color = "red")  + 
@@ -387,7 +400,7 @@ ggplot(cv_output_spline2, aes(x = IMDB_Rating, y = resid)) +
          title = "Residuals vs. IMDB Rating") +
     theme_classic()
 
-ggplot(cv_output_spline2, aes(x = No_of_Votes, y = resid)) +
+ggplot(gam1_output, aes(x = No_of_Votes, y = resid)) +
     geom_point() +
     geom_smooth() +
     geom_hline(yintercept = 0, color = "red")  + 
@@ -397,24 +410,30 @@ ggplot(cv_output_spline2, aes(x = No_of_Votes, y = resid)) +
     theme_classic()
 ```
 
-There does not appear to be any significant bias after analyzing the residuals.
+There does not appear to be any significant bias after analyzing the residuals. The trendline for Residuals vs. Runtime trends up at the end points since there are only a few cases with very short and very long runtimes.
 
 ## Compare All Regression Model Performance
 
 ```{r}
-full_lm_modelcv %>% collect_metrics() #OLS
+# Eval Metrics from CV
+
+full_lm_modelcv %>% collect_metrics() # OLS
 ```
 
 ```{r}
-lasso_fit %>% collect_metrics() #LASSO
+# Eval Metrics from CV
+
+lasso_fit %>% collect_metrics() # LASSO
 ```
 
 ```{r}
-cv_output_spline2 %>%
-    rmse(truth = Gross, estimate = .pred) #GAM
+# Eval Metrics from CV
+
+gam1_output %>%
+    rmse(truth = Gross, estimate = .pred) # GAM
 ```
 
-The GAM with Splines obtained using TidyModels performs the best with the lowest RMSE value (1.3 compared to 1.4 for the others).
+The GAM with Splines obtained using TidyModels performs the best with the lowest RMSE value (approx. 1.3 compared to approx. 1.4 for the others).
 
 
 # Classification Models
@@ -422,6 +441,8 @@ The GAM with Splines obtained using TidyModels performs the best with the lowest
 ## Create New Dataset for Classification
 
 ```{r}
+# Remove log transformation from Gross
+
 imdb_class <- imdb_top_1000 %>%
   cSplit("Genre", sep = ",", direction = "wide") %>%
   mutate(Gross = Revenue-Budget)
@@ -438,7 +459,7 @@ imdb_class <- imdb_class %>%
 imdb_clean_class <- imdb_class %>%
   mutate(success_ratio = Revenue/Budget) %>%
   mutate(flop = as.factor(ifelse(success_ratio > 2, 'FALSE', 'TRUE'))) %>%
-  drop_na(flop, No_of_Votes,Runtime, IMDB_Rating,Meta_score,Genre_1)
+  drop_na(flop, No_of_Votes, Runtime, IMDB_Rating, Meta_score, Genre_1)
 ```
 
 ## Random Forests Model
@@ -460,7 +481,8 @@ data_rec <- recipe(flop ~ No_of_Votes + Runtime + IMDB_Rating + Meta_score + Gen
                    data = imdb_clean_class) %>%
   step_naomit(flop, No_of_Votes, Runtime, IMDB_Rating, Meta_score, Genre_1)
 
-# Create Workflows
+# Create Workflows to Test Various Values for mtry
+
  data_wf_mtry3 <- workflow() %>%
   add_model(rf_spec %>% set_args(mtry = 3)) %>%
   add_recipe(data_rec) 
@@ -477,7 +499,8 @@ data_wf_mtry5 <- workflow() %>%
 ### Fit Models with Various Values for mtry
 
 ```{r}
-# Fit Models
+# Fit Models (for each mtry value)
+
 set.seed(123)
 data_fit_mtry3 <- fit(data_wf_mtry3, data = imdb_clean_class)
 
@@ -492,6 +515,7 @@ data_fit_mtry5 <- fit(data_wf_mtry5, data = imdb_clean_class)
 
 ```{r}
 # Custom Function to get OOB predictions, true observed outcomes and add a user-provided model label
+
 rf_OOB_output <- function(fit_model, model_label, truth){
     tibble(
           .pred_class = fit_model %>% extract_fit_engine() %>% pluck('predictions'), #OOB predictions
@@ -500,7 +524,6 @@ rf_OOB_output <- function(fit_model, model_label, truth){
       )
 }
 ```
-
 
 ```{r}
 # Evaluate OOB Metrics
@@ -511,10 +534,18 @@ data_rf_OOB_output <- bind_rows(
     rf_OOB_output(data_fit_mtry5,5, imdb_clean_class %>% pull(flop))
 )
 
+# OOB Accuracy for Each mtry Value
 
 data_rf_OOB_output %>% 
     group_by(model) %>%
     accuracy(truth = flop, estimate = .pred_class)
+
+data_rf_OOB_output %>% 
+    group_by(model) %>%
+    sensitivity(truth = flop, estimate = .pred_class)
+# mtry = 3 and 4 tied for best sensitivity
+
+# Accuracy vs. mtry Plot
 
 data_rf_OOB_output %>% 
   group_by(model) %>%
@@ -524,13 +555,27 @@ data_rf_OOB_output %>%
   geom_point() +
   geom_line() +
   theme_classic()
+# Select mtry = 4 based on accuracy
 ```
 
-### Evaluating Selected Model - Confusion Matrix
+### Evaluating Selected Model - Confusion Matrix and Evaluation Metrics
 
 ```{r}
+# Confusion Matrix
+
 rf_OOB_output(data_fit_mtry4,4, imdb_clean_class %>% pull(flop)) %>%
     conf_mat(truth = flop, estimate= .pred_class)
+
+# Sensitivity, Specificity, and Accuracy
+
+rf_OOB_output(data_fit_mtry4,4, imdb_clean_class %>% pull(flop)) %>%
+  sensitivity(truth = flop, estimate= .pred_class)
+
+rf_OOB_output(data_fit_mtry4,4, imdb_clean_class %>% pull(flop)) %>%
+  specificity(truth = flop, estimate= .pred_class)
+
+rf_OOB_output(data_fit_mtry4,4, imdb_clean_class %>% pull(flop)) %>%
+  accuracy(truth = flop, estimate= .pred_class)
 ```
 
 ### Variable Importance
@@ -609,8 +654,8 @@ log_wf <- workflow() %>%
 ### Fit Model
 
 ```{r}
-
 # Fit Model
+
 log_fit <- fit(log_wf, data = imdb_clean_class)
 
 tidy(log_fit)
@@ -627,10 +672,13 @@ log_fit %>% tidy() %>%
 
 ```{r}
 # Creation of CV Folds
+
 data_cv10_class <- vfold_cv(imdb_clean_class, v = 10)
 ```
 
 ```{r}
+# Cross Validation Performed (10 folds)
+
 log_modelcv <- fit_resamples(log_wf, resamples = data_cv10_class, metrics = metric_set(accuracy,sens,yardstick::spec))
 
 log_modelcv %>%
@@ -662,10 +710,12 @@ final_output %>%
 
 ```{r}
 # Thresholds in terms of reference level
+
 threshold_output <- final_output %>%
     threshold_perf(truth = flop, estimate = .pred_FALSE, thresholds = seq(0,1,by=.01)) 
 
 # J-index v. Threshold for no flop
+
 threshold_output %>%
     filter(.metric == 'j_index') %>%
     ggplot(aes(x = .threshold, y = .estimate)) +
@@ -706,6 +756,8 @@ threshold_output %>%
 
 log_metrics <- metric_set(accuracy,sens,yardstick::spec)
 
+# Compare Eval Metrics
+
 final_output %>%
     mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .78)) %>%
     log_metrics(truth = flop, estimate = .pred_class, event_level = 'second')
@@ -713,6 +765,8 @@ final_output %>%
 final_output %>%
     mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .71)) %>%
     log_metrics(truth = flop, estimate = .pred_class, event_level = 'second')
+
+# Compare Confusion Matrices
 
 final_output %>%
   mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .78)) %>%
@@ -723,6 +777,8 @@ final_output %>%
   conf_mat(truth = flop, estimate = .pred_class)
 ```
 
+We chose the threshold of 0.78 for our final model because we are prioritizing sensitivity over accuracy and specificity.
+
 ### Predictions
 
 ```{r}
@@ -731,7 +787,7 @@ predict(log_fit, new_data = data.frame(No_of_Votes = 10000, Runtime = 112, IMDB_
 )
 ```
 
-We manually performed the hard predictions with threshold = .78.
+We manually performed the hard predictions with threshold = .78. Since .pred_FALSE = 0.56 which is lower than our threshold of 0.78, we would predict this example movie would flop (flop = TRUE).
 
 # Unsupervised Learning - Clustering
 
@@ -759,11 +815,11 @@ ggplot(imdb_clean, aes(x = Gross, y = No_of_Votes)) +
   geom_point() + theme_classic()
 ```
 
-### Create Clusters
+### Feature Selection
 
 ```{r}
 imdb_sub <- imdb_clean %>%
-    select(Budget, Runtime)
+    select(Budget, Gross)
 
 set.seed(253)
 ```
@@ -806,7 +862,7 @@ imdb_clean <- imdb_clean %>%
 ```{r}
 # Visualize the cluster assignments on the original scatterplot
 imdb_clean %>%
-  ggplot(aes(x = Budget, y = Runtime, color = kclust_8)) +
+  ggplot(aes(x = Budget, y = Gross, color = kclust_8)) +
     geom_point() + theme_classic()
 ```
 
@@ -874,7 +930,7 @@ imdb_clean %>%
 
 ```
 
-## Hierarchial Clustering
+## Hierarchical Clustering
 
 ### Set up Clustering and Distance Matrix
 
