@@ -1,0 +1,1025 @@
+---
+title: "Final Project Code"
+author: "Emily, Julian, Jacob, and Aristo"
+date: '2022-11-20'
+output: 
+  html_document:
+    df_print: paged
+    toc: true
+    code_download: true
+    theme: paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, warning = FALSE, message = FALSE, tidy = TRUE)
+```
+
+# Library Statements 
+
+```{r}
+library(ISLR)
+library(dplyr)
+library(readr)
+library(broom)
+library(ggplot2)
+library(tidymodels) 
+library(stringr)
+library(splitstackshape)
+library(lubridate)
+library(rpart.plot)
+library(cluster)
+library(forcats)
+tidymodels_prefer()
+library(probably) #install.packages('probably')
+library(vip)
+```
+
+# Dataset
+
+```{r}
+imdb_top_1000 <- read_csv("~/Desktop/Statistical Machine Learning/R Files/Final Project/imdb_top_1000_CLEAN.csv")
+```
+
+## Data Cleaning
+
+```{r}
+imdb_clean <- imdb_top_1000 %>%
+  cSplit("Genre", sep = ",", direction = "wide") %>%
+  mutate(Gross = log(Revenue-Budget))
+
+runtime_clean <- imdb_top_1000$Runtime %>%
+  str_replace(" min", "") %>%
+  as.numeric()
+
+imdb_clean$Runtime <- runtime_clean
+
+imdb_clean <- imdb_clean %>%
+  filter(Gross != "-Inf") %>%
+  drop_na(Gross, Budget)
+```
+
+## Data
+
+```{r}
+head(imdb_clean)
+```
+
+# Regression Models
+
+## Ordinary Linear Regression Model
+
+### Creation of CV Folds
+
+```{r}
+data_cv10 <- vfold_cv(imdb_clean, v = 10)
+```
+
+### Model Spec, Recipes, and Workflows
+
+```{r}
+# Model Spec
+
+lm_spec <-
+    linear_reg() %>% 
+    set_engine(engine = 'lm') %>% 
+    set_mode('regression')
+
+# Recipe
+
+full_lm_rec <- recipe(Gross ~ Runtime + IMDB_Rating + Meta_score + 
+                   No_of_Votes + Genre_1, data = imdb_clean) %>%
+    step_nzv(all_predictors()) %>% 
+    step_normalize(all_numeric_predictors()) %>% 
+    step_dummy(all_nominal_predictors()) %>%
+    step_naomit(Gross, Runtime, IMDB_Rating, Meta_score, No_of_Votes)
+
+# Workflow
+
+full_lm_wf <- workflow() %>%
+    add_recipe(full_lm_rec) %>%
+    add_model(lm_spec)
+```
+
+### Fit Full Model
+
+```{r}
+full_lm_model <- fit(full_lm_wf, data = imdb_clean) 
+
+full_lm_model %>% tidy()
+```
+
+### Obtain Evaluation Metrics for Full Model
+
+```{r}
+full_lm_modelcv <- fit_resamples(full_lm_wf, resamples = data_cv10, metrics = metric_set(rmse, rsq, mae))
+
+full_lm_modelcv %>%
+  collect_metrics()
+```
+
+## Perform LASSO for Subset Selection (Regression Model)
+
+### Model Spec, Recipes, and Workflow
+
+```{r}
+# Lasso Model Spec with tune
+
+lm_lasso_spec_tune <- 
+  linear_reg() %>%
+  set_args(mixture = 1, penalty = tune()) %>%   # mixture = 1 indicates Lasso
+  set_engine(engine = 'glmnet') %>%             
+  set_mode('regression') 
+
+# Recipe
+
+data_rec_lasso <- recipe(Gross ~ Runtime + IMDB_Rating + Meta_score + 
+                   No_of_Votes + Genre_1, data = imdb_clean) %>%
+    step_nzv(all_predictors()) %>%                # removes variables with the same value (don't want duplicates)
+    step_novel(all_nominal_predictors()) %>%      # important if you have rare categorical variables 
+    step_normalize(all_numeric_predictors()) %>%  # standardization important step for LASSO
+    step_dummy(all_nominal_predictors()) %>%      # creates indicator variables for categorical variables
+    step_naomit(Gross, Runtime, IMDB_Rating,      # omit any NA values
+                Meta_score, No_of_Votes)                            
+
+# Workflow
+
+lasso_wf_tune <- workflow() %>% 
+  add_recipe(data_rec_lasso) %>%
+  add_model(lm_lasso_spec_tune) 
+```
+
+### Tune Model and Cross Validation
+
+```{r}
+
+# Tune Model (trying a variety of values of Lambda penalty)
+
+penalty_grid <- grid_regular(
+  penalty(range = c(-3, 1)),
+  levels = 30)
+
+tune_res <- tune_grid(
+  lasso_wf_tune, 
+  resamples = data_cv10, 
+  metrics = metric_set(rmse, mae),
+  grid = penalty_grid 
+)
+
+# Visualize Model Evaluation Metrics from Tuning
+
+autoplot(tune_res) + theme_classic()
+
+# Collect CV Metrics and Select Best Model
+
+# Summarize Model Evaluation Metrics (CV)
+lasso_mod <- collect_metrics(tune_res) %>%
+  filter(.metric == 'rmse') %>%
+  select(penalty, rmse = mean) 
+
+# Choose penalty value
+best_penalty <- select_best(tune_res, metric = 'rmse')
+
+lasso_mod
+```
+
+### Fit Final LASSO Model
+
+```{r}
+# Fit Final Model
+
+final_wf <- finalize_workflow(lasso_wf_tune, best_penalty) # incorporates penalty value to workflow
+
+final_fit <- fit(final_wf, data = imdb_clean)
+
+lasso_fit <- fit_resamples(final_wf, resamples = data_cv10, metrics = metric_set(rmse, rsq, mae))
+
+tidy(final_fit)
+
+# Final ("best") model predictors and coefficients
+
+final_fit %>% tidy() %>% filter(estimate != 0)
+```
+
+### Obtain Evaluation Metrics for Lasso Model
+
+```{r}
+lasso_fit %>%
+  collect_metrics()
+```
+
+### Visualize Residuals for LASSO Model
+
+```{r}
+lasso_mod_out <- final_fit %>%
+    predict(new_data = imdb_clean) %>%
+    bind_cols(imdb_clean) %>%
+    mutate(resid = Gross - .pred)
+
+ggplot(lasso_mod_out, aes(x = .pred, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out, aes(x = Runtime, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out, aes(x = IMDB_Rating, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+
+ggplot(lasso_mod_out, aes(x = No_of_Votes, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    theme_classic()
+```
+
+## GAM with Splines (TidyModels)
+
+### Build the GAM
+
+```{r}
+# Build the GAM
+
+gam_spec <- 
+  gen_additive_mod() %>%
+  set_engine(engine = 'mgcv') %>%
+  set_mode('regression') 
+
+gam_mod1 <- fit(gam_spec,
+    Gross ~ s(Runtime, k = 20) + s(IMDB_Rating) + Meta_score + s(No_of_Votes) + Genre_1,
+    data = imdb_clean 
+)
+
+```
+
+### Run Diagnostics
+
+````{r}
+# Diagnostics: Check to see if the number of knots is large enough (if p-value is low, increase number of knots)
+
+gam_mod1 %>% pluck('fit') %>% mgcv::gam.check()
+```
+
+```{r}
+# Diagnostics: Check to see if the number of knots is large enough
+
+gam_mod1 %>% pluck('fit') %>% summary() 
+```
+
+### Visualization for Non-Linear Functions
+
+```{r}
+# Visualize: Look at the estimated non-linear functions
+
+gam_mod1 %>% pluck('fit') %>% plot(main = "Non-Linear Visualizations")
+```
+
+### Obtain Evaluation Metrics for GAM1
+
+```{r}
+gam1_output <- gam_mod1%>% 
+    predict(new_data = imdb_clean) %>%
+    bind_cols(imdb_clean) %>%
+    mutate(resid = Gross - .pred)
+
+gam1_output %>%
+    rmse(truth = Gross, estimate = .pred)
+```
+
+## GAM with Splines (Recipe)
+
+### Build the GAM
+
+```{r}
+spline_rec <- recipe(Gross ~ Runtime + IMDB_Rating + Meta_score + 
+                   No_of_Votes + Genre_1, data = imdb_clean) %>%
+    step_nzv(all_predictors()) %>% 
+    step_normalize(all_numeric_predictors()) %>% 
+    step_dummy(all_nominal_predictors()) %>%
+    step_naomit(Gross) %>%
+    step_ns(Runtime, deg_free = 20) %>%
+    step_ns(No_of_Votes, deg_free = 10) %>%
+    step_ns(IMDB_Rating, deg_free = 10)
+
+
+spline_rec %>% prep(imdb_clean) %>% juice()
+```
+
+```{r}
+# Build the GAM
+
+lm_spec_gam <-
+  linear_reg() %>%
+  set_engine(engine = 'lm') %>%
+  set_mode('regression')
+
+spline_wf <- workflow() %>%
+    add_model(lm_spec) %>%
+    add_recipe(spline_rec)
+
+cv_output_spline2 <- fit_resamples( 
+  spline_wf, # workflow
+  resamples = data_cv10, # cv folds
+  metrics = metric_set(mae,rmse,rsq)
+)
+
+```
+
+### Obtain Evaluation Metrics for GAM2
+
+```{r}
+cv_output_spline2 %>% collect_metrics()
+```
+
+## Compare GAMs
+
+```{r}
+gam1_output %>%
+    rmse(truth = Gross, estimate = .pred)
+
+cv_output_spline2 %>% collect_metrics()
+```
+
+The GAM created using TidyModels performs better than the recipe and GAMs. Likely has to do with the degrees of freedom of the splines.
+
+### Visualize Residuals for Final GAM (GAM1)
+
+```{r}
+
+# Visualize Residuals
+cv_output_spline2 <- new_mod %>%
+    predict(new_data = imdb_clean) %>%
+    bind_cols(imdb_clean) %>%
+    mutate(resid = Gross - .pred)
+
+
+ggplot(cv_output_spline2, aes(x = .pred, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red") + 
+    labs(x = "Prediction",
+         y = "Residuals", 
+         title = "Residuals vs. Predictions") +
+    theme_classic()
+
+ggplot(cv_output_spline2, aes(x = Runtime, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red")  + 
+    labs(x = "Runtime",
+         y = "Residuals", 
+         title = "Residuals vs. Runtime") +
+    theme_classic()
+
+ggplot(cv_output_spline2, aes(x = IMDB_Rating, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red")  + 
+    labs(x = "IMDB Rating",
+         y = "Residuals", 
+         title = "Residuals vs. IMDB Rating") +
+    theme_classic()
+
+ggplot(cv_output_spline2, aes(x = No_of_Votes, y = resid)) +
+    geom_point() +
+    geom_smooth() +
+    geom_hline(yintercept = 0, color = "red")  + 
+    labs(x = "Number of Votes",
+         y = "Residuals", 
+         title = "Residuals vs. Number of Votes") +
+    theme_classic()
+```
+
+There does not appear to be any significant bias after analyzing the residuals.
+
+## Compare All Regression Model Performance
+
+```{r}
+full_lm_modelcv %>% collect_metrics() #OLS
+```
+
+```{r}
+lasso_fit %>% collect_metrics() #LASSO
+```
+
+```{r}
+cv_output_spline2 %>%
+    rmse(truth = Gross, estimate = .pred) #GAM
+```
+
+The GAM with Splines obtained using TidyModels performs the best with the lowest RMSE value (1.3 compared to 1.4 for the others).
+
+
+# Classification Models
+
+## Create New Dataset for Classification
+
+```{r}
+imdb_class <- imdb_top_1000 %>%
+  cSplit("Genre", sep = ",", direction = "wide") %>%
+  mutate(Gross = Revenue-Budget)
+
+runtime_clean <- imdb_top_1000$Runtime %>%
+  str_replace(" min", "") %>%
+  as.numeric()
+
+imdb_class$Runtime <- runtime_clean
+
+imdb_class <- imdb_class %>%
+  drop_na(Gross, Budget)
+
+imdb_clean_class <- imdb_class %>%
+  mutate(success_ratio = Revenue/Budget) %>%
+  mutate(flop = as.factor(ifelse(success_ratio > 2, 'FALSE', 'TRUE'))) %>%
+  drop_na(flop, No_of_Votes,Runtime, IMDB_Rating,Meta_score,Genre_1)
+```
+
+## Random Forests Model
+
+### Model Spec, Recipe, and Workflow
+
+```{r}
+# Model Specification
+rf_spec <- rand_forest() %>%
+  set_engine(engine = 'ranger') %>% 
+  set_args(trees = 1000, # Number of trees
+           min_n = NULL,
+           probability = FALSE,
+           importance = 'impurity') %>%
+  set_mode('classification')
+
+# Recipe
+data_rec <- recipe(flop ~ No_of_Votes + Runtime + IMDB_Rating + Meta_score + Genre_1,
+                   data = imdb_clean_class) %>%
+  step_naomit(flop, No_of_Votes, Runtime, IMDB_Rating, Meta_score, Genre_1)
+
+# Create Workflows
+ data_wf_mtry3 <- workflow() %>%
+  add_model(rf_spec %>% set_args(mtry = 3)) %>%
+  add_recipe(data_rec) 
+
+data_wf_mtry4 <- workflow() %>%
+  add_model(rf_spec %>% set_args(mtry = 4)) %>%
+  add_recipe(data_rec) 
+
+data_wf_mtry5 <- workflow() %>%
+  add_model(rf_spec %>% set_args(mtry = 5)) %>%
+  add_recipe(data_rec)
+```
+
+### Fit Models with Various Values for mtry
+
+```{r}
+# Fit Models
+set.seed(123)
+data_fit_mtry3 <- fit(data_wf_mtry3, data = imdb_clean_class)
+
+set.seed(123) 
+data_fit_mtry4 <- fit(data_wf_mtry4, data = imdb_clean_class)
+
+set.seed(123)
+data_fit_mtry5 <- fit(data_wf_mtry5, data = imdb_clean_class)
+```
+
+### Obtain OOB Predictions and Evaluation Metrics to Choose mtry Value
+
+```{r}
+# Custom Function to get OOB predictions, true observed outcomes and add a user-provided model label
+rf_OOB_output <- function(fit_model, model_label, truth){
+    tibble(
+          .pred_class = fit_model %>% extract_fit_engine() %>% pluck('predictions'), #OOB predictions
+          flop = truth,
+          model = model_label
+      )
+}
+```
+
+
+```{r}
+# Evaluate OOB Metrics
+
+data_rf_OOB_output <- bind_rows(
+    rf_OOB_output(data_fit_mtry3,3, imdb_clean_class %>% pull(flop)),
+    rf_OOB_output(data_fit_mtry4,4, imdb_clean_class %>% pull(flop)),
+    rf_OOB_output(data_fit_mtry5,5, imdb_clean_class %>% pull(flop))
+)
+
+
+data_rf_OOB_output %>% 
+    group_by(model) %>%
+    accuracy(truth = flop, estimate = .pred_class)
+
+data_rf_OOB_output %>% 
+  group_by(model) %>%
+  accuracy(truth = flop, estimate = .pred_class) %>%
+  mutate(mtry = as.numeric(stringr::str_replace(model,'mtry',''))) %>%
+  ggplot(aes(x = mtry, y = .estimate )) + 
+  geom_point() +
+  geom_line() +
+  theme_classic()
+```
+
+### Evaluating Selected Model - Confusion Matrix
+
+```{r}
+rf_OOB_output(data_fit_mtry4,4, imdb_clean_class %>% pull(flop)) %>%
+    conf_mat(truth = flop, estimate= .pred_class)
+```
+
+### Variable Importance
+
+#### Impurity
+
+```{r}
+# Impurity
+
+model_output <-data_fit_mtry4 %>% 
+    extract_fit_engine() 
+
+model_output %>% 
+    vip(num_features = 10) + theme_classic() #based on impurity, 10 meaning the top 10
+
+model_output %>% vip::vi() %>% head()
+model_output %>% vip::vi() %>% tail()
+```
+
+#### Permuation
+
+```{r}
+# Permutation
+
+model_output2 <- data_wf_mtry4 %>% 
+  update_model(rf_spec %>% set_args(importance = "permutation")) %>% #based on permutation
+  fit(data = imdb_clean_class) %>% 
+    extract_fit_engine() 
+
+model_output2 %>% 
+    vip(num_features = 10) + theme_classic()
+
+
+model_output2 %>% vip::vi() %>% head()
+model_output2 %>% vip::vi() %>% tail()
+```
+
+### Violin Graphs
+
+```{r}
+ggplot(imdb_clean_class, aes(x = flop, y = No_of_Votes)) +
+    geom_violin() + theme_classic()
+
+ggplot(imdb_clean_class, aes(x = flop, y = Runtime)) +
+    geom_violin() + theme_classic()
+
+ggplot(imdb_clean_class, aes(x = flop, y = IMDB_Rating)) +
+    geom_violin() + theme_classic()
+
+ggplot(imdb_clean_class, aes(x = flop, y = Meta_score)) +
+    geom_violin() + theme_classic()
+```
+
+## Logistic Regression
+
+### Model Spec, Recipe, and Workflow
+
+```{r}
+set.seed(123)
+
+# Logistic Regression Model Spec
+logistic_spec <- logistic_reg() %>%
+    set_engine('glm') %>%
+    set_mode('classification')
+
+# Recipe
+logistic_rec <- recipe(flop ~ No_of_Votes + Runtime + IMDB_Rating + Genre_1,
+                   data = imdb_clean_class)
+
+# Workflow (Recipe + Model) for Full Log Model
+log_wf <- workflow() %>%
+    add_recipe(logistic_rec) %>%
+    add_model(logistic_spec)
+```
+
+### Fit Model
+
+```{r}
+
+# Fit Model
+log_fit <- fit(log_wf, data = imdb_clean_class)
+
+tidy(log_fit)
+```
+
+### Add Variable for Odds Ratio
+
+```{r}
+log_fit %>% tidy() %>%
+  mutate(OR = exp(estimate))
+```
+
+### Cross Validation and Evaluation Metrics
+
+```{r}
+# Creation of CV Folds
+data_cv10_class <- vfold_cv(imdb_clean_class, v = 10)
+```
+
+```{r}
+log_modelcv <- fit_resamples(log_wf, resamples = data_cv10_class, metrics = metric_set(accuracy,sens,yardstick::spec))
+
+log_modelcv %>%
+  collect_metrics()
+```
+
+### Picking Threshold
+
+#### Boxplots
+
+```{r}
+final_output <- log_fit %>% predict(new_data = imdb_clean_class, type='prob') %>% bind_cols(imdb_clean_class)
+
+final_output %>%
+  ggplot(aes(x = flop, y = .pred_TRUE)) +
+  geom_boxplot()
+```
+
+#### ROC Curve
+
+```{r}
+# Use soft predictions
+final_output %>%
+    roc_curve(flop,.pred_TRUE,event_level = 'second') %>%
+    autoplot()
+```
+
+#### J Index vs. Threshold
+
+```{r}
+# Thresholds in terms of reference level
+threshold_output <- final_output %>%
+    threshold_perf(truth = flop, estimate = .pred_FALSE, thresholds = seq(0,1,by=.01)) 
+
+# J-index v. Threshold for no flop
+threshold_output %>%
+    filter(.metric == 'j_index') %>%
+    ggplot(aes(x = .threshold, y = .estimate)) +
+    geom_line() +
+    labs(y = 'J-index', x = 'threshold') +
+    theme_classic()
+```
+
+```{r}
+threshold_output %>%
+    filter(.metric == 'j_index') %>%
+    arrange(desc(.estimate))
+```
+
+#### Distance vs. Threshold
+
+```{r}
+# Distance vs. Threshold
+
+threshold_output %>%
+    filter(.metric == 'distance') %>%
+    ggplot(aes(x = .threshold, y = .estimate)) +
+    geom_line() +
+    labs(y = 'Distance', x = 'threshold') +
+    theme_classic()
+```
+
+```{r}
+threshold_output %>%
+    filter(.metric == 'distance') %>%
+    arrange(.estimate)
+```
+
+### Obtain Evaluation Metrics for Logistic Regression Model with Thresholds
+
+```{r}
+# To determine final threshold
+
+log_metrics <- metric_set(accuracy,sens,yardstick::spec)
+
+final_output %>%
+    mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .78)) %>%
+    log_metrics(truth = flop, estimate = .pred_class, event_level = 'second')
+
+final_output %>%
+    mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .71)) %>%
+    log_metrics(truth = flop, estimate = .pred_class, event_level = 'second')
+
+final_output %>%
+  mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .78)) %>%
+  conf_mat(truth = flop, estimate = .pred_class)
+
+final_output %>%
+  mutate(.pred_class = make_two_class_pred(.pred_FALSE, levels(flop), threshold = .71)) %>%
+  conf_mat(truth = flop, estimate = .pred_class)
+```
+
+### Predictions
+
+```{r}
+predict(log_fit, new_data = data.frame(No_of_Votes = 10000, Runtime = 112, IMDB_Rating = 9.8,
+                                        Genre_1 = "Drama"), type = "prob"
+)
+```
+
+We manually performed the hard predictions with threshold = .78.
+
+# Unsupervised Learning - Clustering
+
+## K-Means Clustering
+
+### Preliminary Visualizations
+
+```{r}
+ggplot(imdb_clean, aes(x = Budget, y = Runtime)) + 
+  geom_point() + theme_classic()
+
+imdb_clean %>%
+  filter(Budget > 1) %>% 
+  ggplot(aes(x = Budget, y = Gross)) + 
+  geom_point() + 
+  labs(x = "Budget in USD", 
+       y = "Gross Profit in USD (Log Scale)", 
+       title = "Preliminary Visualizations") +
+  theme_classic()
+
+ggplot(imdb_clean, aes(x = No_of_Votes, y = Runtime)) + 
+  geom_point() + theme_classic()
+
+ggplot(imdb_clean, aes(x = Gross, y = No_of_Votes)) + 
+  geom_point() + theme_classic()
+```
+
+### Create Clusters
+
+```{r}
+imdb_sub <- imdb_clean %>%
+    select(Budget, Runtime)
+
+set.seed(253)
+```
+
+### Determine Number of Clusters
+
+```{r}
+# Data-specific function to cluster and calculate total within-cluster SS
+imdb_cluster_ss <- function(k){
+    # Perform clustering
+    kclust <- kmeans(scale(imdb_sub), centers = k)
+
+    # Return the total within-cluster sum of squares
+    return(kclust$tot.withinss)
+}
+
+tibble(
+    k = 1:15,
+    tot_wc_ss = purrr::map_dbl(1:15, imdb_cluster_ss)
+) %>% 
+    ggplot(aes(x = k, y = tot_wc_ss)) +
+    geom_point() + 
+    labs(x = "Number of clusters",y = 'Total within-cluster sum of squares') + 
+    theme_classic()
+```
+
+### Select k = 8 Clusters
+
+```{r}
+kclust_k8 <- kmeans(scale(imdb_sub), centers = 8)
+
+kclust_k8$cluster   # Display cluster assignments
+
+imdb_clean <- imdb_clean %>%
+    mutate(kclust_8 = factor(kclust_k8$cluster))
+```
+
+### Visualize Cluster Assignments
+
+```{r}
+# Visualize the cluster assignments on the original scatterplot
+imdb_clean %>%
+  ggplot(aes(x = Budget, y = Runtime, color = kclust_8)) +
+    geom_point() + theme_classic()
+```
+
+### Interpreting Clusters
+
+#### Exploring Genre Breakdown
+
+```{r}
+
+# Count of Movies per Genre (Primary Genre)
+imdb_clean %>%
+  count(Genre_1)
+
+# Count of Movies per Genre (Secondary Genre)
+imdb_clean %>%
+  count(Genre_2)
+
+# Count of Movies per Genre (Overall Genre)
+imdb_clean %>%
+  count(New_Genre)
+```
+
+```{r}
+# Genres vs Cluster
+
+# How many of each Genre 1 in each cluster
+imdb_clean %>%
+  group_by(kclust_8) %>%
+  count(Genre_1)
+
+# How many of each Genre 2 in each cluster
+imdb_clean %>%
+  group_by(kclust_8) %>%
+  count(Genre_2)
+
+# How many movies in each cluster
+imdb_clean%>%
+  count(kclust_8)
+```
+
+#### Visualizations of Genres in Each Cluster
+
+```{r}
+
+# Genre 1
+imdb_clean %>%
+  ggplot(aes(x = kclust_8, fill = Genre_1)) +
+    geom_bar(position = "fill") +
+    labs(x = "Cluster") + 
+    theme_classic()
+
+# Genre 2
+imdb_clean %>%
+  ggplot(aes(x = kclust_8, fill = Genre_2)) +
+    geom_bar(position = "fill") +
+    labs(x = "Cluster") + 
+    theme_classic()
+
+# Overall Genre
+imdb_clean %>%
+  ggplot(aes(x = kclust_8, fill = New_Genre)) +
+    geom_bar(position = "fill") +
+    labs(x = "Cluster") + 
+    theme_classic()
+
+```
+
+## Hierarchial Clustering
+
+### Set up Clustering and Distance Matrix
+
+```{r}
+# Random subsample of 25 Movies
+set.seed(253)
+
+imdb_hc <- imdb_clean %>%
+  slice_sample(n = 25) %>%
+  filter(Budget != 0)
+
+# Select the variables to be used in clustering
+imdb_hc_sub <- imdb_hc %>%
+  select(Gross, Budget)
+
+imdb_hc_full <- imdb_clean %>%
+  select(Gross, Budget) %>%
+  filter(Budget > 1)
+
+# Summary statistics for the variables
+summary(imdb_hc_sub)
+
+# Compute a distance matrix on the scaled data
+dist_mat_scaled <- dist(scale(imdb_hc_sub))     # Subset Distance Matrix
+
+dist_mat_full <- dist(scale(imdb_hc_full))      # Full Data Distance Matrix
+```
+
+### Perform Fusing Process
+
+```{r}
+imdb_hc_avg <- hclust(dist_mat_scaled, method = "average")    # Subset
+imdb_full_avg <- hclust(dist_mat_full, method = "average")    # Full Data
+```
+
+### Visualize Dendrograms
+
+```{r}
+# Plot dendrogram on Subset
+plot(imdb_hc_avg)
+```
+
+```{r}
+# Adding Genre Labels
+
+plot(imdb_hc_avg, labels = imdb_hc$Genre_1, main = "Movie Clusters", xlab = NULL)
+
+plot(imdb_hc_avg, labels = paste(imdb_hc$Genre_1, imdb_hc$Genre_2))
+
+plot(imdb_hc_avg, 
+     main = "Visualizing Movie Clusters",
+     labels = paste(imdb_hc$Genre_1, imdb_hc$Genre_2, imdb_hc$Genre_3), 
+     hang = -1, 
+     cex = 1)
+
+plot(imdb_hc_avg, labels = paste(imdb_hc$New_Genre))
+```
+
+### Cutting the Tree (Choosing k)
+
+```{r}
+imdb_clean_clust <- imdb_clean %>%
+  filter(Budget > 1) %>%
+    mutate(
+        hclust_num2 = factor(cutree(imdb_full_avg, k = 2)), # Cut into 2 clusters (k)
+        hclust_num4 = factor(cutree(imdb_full_avg, k = 4)), # Cut into 4 clusters (k)
+        hclust_num8 = factor(cutree(imdb_full_avg, k = 8)) # Cut into 8 clusters (k)
+    )
+```
+
+```{r}
+ggplot(imdb_clean_clust, aes(x = hclust_num2, fill = Genre_1)) +
+  geom_bar(position = "fill") +
+  labs(x = "Cluster", 
+       y = "Proportion of Cluster", 
+       title = "Selecting Number of Clusters (k)") + 
+  theme_classic() + 
+  theme(plot.title = element_text(size = 20, face = "bold"))
+
+ggplot(imdb_clean_clust, aes(x = hclust_num4, fill = Genre_1)) +
+  geom_bar(position = "fill") +
+  labs(x = "Cluster", 
+       y = "Proportion of Cluster", 
+       title = "Selecting Number of Clusters (k)") + 
+  theme_classic() + 
+  theme(plot.title = element_text(size = 20, face = "bold"))
+
+ggplot(imdb_clean_clust, aes(x = hclust_num8, fill = Genre_1)) +
+  geom_bar(position = "fill") +
+  labs(x = "Cluster", 
+       y = "Proportion of Cluster", 
+       title = "Selecting Number of Clusters (k)") + 
+  theme_classic() + 
+  theme(plot.title = element_text(size = 20, face = "bold"))
+```
+
+
+### Visualizing Genres in Final Clusters (Full Data)
+
+```{r}
+ggplot(imdb_clean_clust, aes(x = hclust_num2, fill = Genre_1)) +
+  geom_bar(position = "fill") +
+  labs(x = "Cluster", 
+       y = "Proportion of Cluster", 
+       title = "Selecting Number of Clusters (k)", 
+       fill = "Genre 1") + 
+  theme_classic() + 
+  theme(plot.title = element_text(size = 20, face = "bold"))
+
+ggplot(imdb_clean_clust, aes(x = hclust_num2, fill = New_Genre)) +
+    geom_bar(position = "fill") +
+    labs(x = "Cluster") + 
+    theme_classic()
+
+ggplot(imdb_clean_clust, aes(x = Budget, y = Gross, color = hclust_num2)) +
+  geom_point() +
+  labs(x = "Budget in USD", 
+       y = "Gross Profit in USD (Log Scale)", 
+       title = "Visualizing Clusters: Gross Profit vs. Budget",
+       color = "Clusters") + 
+  theme_classic() + 
+  theme(plot.title = element_text(size = 20, face = "bold"))
+
+ggplot(imdb_clean_clust, aes(x = hclust_num2, y = Budget)) +
+  geom_boxplot() +
+  labs(x = "Cluster", 
+       y = "Budget in USD", 
+       title = "Visualizing Clusters: Budget") + 
+  theme_classic() + 
+  theme(plot.title = element_text(size = 20, face = "bold"))
+
+ggplot(imdb_clean_clust, aes(x = hclust_num2, y = Gross)) +
+  geom_boxplot() +
+  labs(x = "Cluster", 
+       y = "Gross Profit in USD (Log Scale)", 
+       title = "Visualizing Clusters: Gross Profit") + 
+  theme_classic() + 
+  theme(plot.title = element_text(size = 20, face = "bold"))
+
+imdb_clean_clust %>%
+  count(hclust_num2)
+
+imdb_clean_clust %>%
+  group_by(hclust_num2) %>%
+  summarize(mean(Gross), sd(Gross), min(Gross), max(Gross),
+            mean((Budget/100000)), sd((Budget/100000)), min((Budget/100000)), max((Budget/100000)))
+```
+
